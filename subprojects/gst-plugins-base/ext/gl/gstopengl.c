@@ -92,6 +92,7 @@ plugin_init (GstPlugin * plugin)
   ret |= GST_ELEMENT_REGISTER (glfilterreflectedscreen, plugin);
 #endif
   ret |= GST_ELEMENT_REGISTER (glmosaic, plugin);
+  ret |= GST_ELEMENT_REGISTER (urbopano, plugin);
 #ifdef HAVE_PNG
   ret |= GST_ELEMENT_REGISTER (gldifferencematte, plugin);
 #if 0

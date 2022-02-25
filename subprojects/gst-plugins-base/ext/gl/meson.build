@@ -59,6 +59,7 @@ if gl_dep.found() # have desktop GL
   opengl_sources += [
     'gstglfilterglass.c',
     'gstglmosaic.c',
+    'urbopano.c',
   ]
 endif
 
