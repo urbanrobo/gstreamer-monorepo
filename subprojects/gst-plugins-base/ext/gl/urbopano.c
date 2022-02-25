@@ -29,9 +29,11 @@
  *
  * ## Examples
  * |[
- gst-launch-1.0 videotestsrc ! video/x-raw, format=YUY2 ! glupload ! glcolorconvert ! queue ! urbopano name=m ! glimagesink \
- videotestsrc pattern=12 ! video/x-raw, format=I420, framerate=5/1, width=100, height=200 ! glupload ! glcolorconvert ! queue ! m. \
- videotestsrc ! video/x-raw, framerate=15/1, width=1500, height=1500 ! glupload ! gleffects effect=3 ! queue ! m. \
+ gst-launch-1.0 videotestsrc ! video/x-raw, format=YUY2, width=1000, height=1000 ! glupload ! glcolorconvert ! queue ! urbopano name=m ! glimagesink \
+ videotestsrc ! video/x-raw, framerate=15/1, width=1000, height=1000 ! glupload ! gleffects effect=3 ! queue ! m. \
+ videotestsrc pattern=12 ! video/x-raw, format=I420, framerate=5/1, width=1000, height=1000 ! glupload ! glcolorconvert ! queue ! m. \
+
+
  videotestsrc ! glupload ! gleffects effect=2 ! queue ! m.  \
  videotestsrc ! glupload ! glfiltercube ! queue ! m. \
  videotestsrc ! glupload ! gleffects effect=6 ! queue ! m.
@@ -329,20 +331,22 @@ gst_gl_URBOPANO_callback (gpointer stuff)
     /* *INDENT-OFF* */
     gfloat vertices[] = {
       /* front face */
-       1.0f, 1.0f,-1.0f, 1.0f, 0.0f,
-       1.0f,-1.0f,-1.0f, 1.0f, 1.0f,
+       0.0f, 1.0f,-1.0f, 1.0f, 0.0f,
+       0.0f,-1.0f,-1.0f, 1.0f, 1.0f,
       -1.0f,-1.0f,-1.0f, 0.0f, 1.0f,
       -1.0f, 1.0f,-1.0f, 0.0f, 0.0f,
       /* right face */
-       2.0f, 2.0f, 2.0f, 2.0f, 1.0f,
-       2.0f,0.0f, 2.0f, 1.0f, 1.0f,
-       2.0f,0.0f,0.0f, 1.0f, 2.0f,
-       2.0f, 2.0f,0.0f, 2.0f, 2.0f,
+      // bottom right corner to the right, bottom right corner down, bottom right corner to the back, dont know, dont know
+       1.1f, 1.0f,-1.0f, 1.0f, 1.0f,
+       // top right corner to the right
+       1.1f,-1.0f,-1.0f, 1.0f, 1.0f,
+      0.1f,-1.0f,-1.0f, 0.0f, 1.0f,
+      0.1f, 1.0f,-1.0f, 0.0f, 0.0f,
       /* left face */
-      -1.0f, 1.0f, 1.0f, 1.0f, 0.0f,
-      -1.0f, 1.0f,-1.0f, 1.0f, 1.0f,
-      -1.0f,-1.0f,-1.0f, 0.0f, 1.0f,
-      -1.0f,-1.0f, 1.0f, 0.0f, 0.0f,
+       -1.1f, 1.0f,-1.0f, 1.0f, 0.0f,
+       -1.1f,-1.0f,-1.0f, 1.0f, 1.0f,
+      -2.1f,-1.0f,-1.0f, 0.0f, 1.0f,
+      -2.1f, 1.0f,-1.0f, 0.0f, 0.0f,
       /* top face */
        1.0f,-1.0f, 1.0f, 1.0f, 0.0f,
       -1.0f,-1.0f, 1.0f, 0.0f, 0.0f,
@@ -354,8 +358,8 @@ gst_gl_URBOPANO_callback (gpointer stuff)
       -1.0f, 1.0f,-1.0f, 0.0f, 1.0f,
       -1.0f, 1.0f, 1.0f, 0.0f, 0.0f,
       /* back face */
-       1.0f, 1.0f, 1.0f, 1.0f, 0.0f,
-      -1.0f, 1.0f, 1.0f, 0.0f, 0.0f,
+       2.0f, 2.0f, 2.0f, 2.0f, 1.0f,
+       2.0f,0.0f, 2.0f, 1.0f, 1.0f,
       -1.0f,-1.0f, 1.0f, 0.0f, 1.0f,
        1.0f,-1.0f, 1.0f, 1.0f, 1.0f
     };
@@ -411,6 +415,8 @@ gst_gl_URBOPANO_callback (gpointer stuff)
       break;
     }
 
+    GST_DEBUG ("BINGO BABY!");
+
     if (!in_tex || width <= 0 || height <= 0) {
       GST_DEBUG ("skipping texture:%u pad:%p width:%u height %u",
           in_tex, pad, width, height);
@@ -418,6 +424,8 @@ gst_gl_URBOPANO_callback (gpointer stuff)
       walk = g_list_next (walk);
       continue;
     }
+
+    GST_TRACE ("BINGO!");
 
     GST_TRACE ("processing texture:%u dimensions:%ux%u", in_tex, width, height);
 
