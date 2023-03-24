@@ -55,7 +55,7 @@
 #include "gstclockoverlay.h"
 #include "gstpangoelements.h"
 
-#define DEFAULT_PROP_TIMEFORMAT 	"%H:%M:%S"
+#define DEFAULT_PROP_TIMEFORMAT 	"%H:%M:%S:%MS"
 
 enum
 {
@@ -102,7 +102,7 @@ gst_clock_overlay_render_time (GstClockOverlay * overlay)
 #endif
 
   if (t == NULL)
-    return g_strdup ("--:--:--");
+    return g_strdup ("--:--:--:--");
 
 #ifdef G_OS_WIN32
   if (wcsftime (buf, sizeof (buf), (wchar_t *) overlay->wformat, t) == 0)
@@ -210,7 +210,7 @@ gst_clock_overlay_init (GstClockOverlay * overlay)
 
 #ifdef G_OS_WIN32
   overlay->wformat =
-      g_utf8_to_utf16 (DEFAULT_PROP_TIMEFORMAT, -1, NULL, NULL, NULL);
+      g_utf8_to_utf16 (DEFAULT_PROP_TIMEFORMAT, -1, NULL, NULL, NULL, NULL);
 #endif
 
   context = textoverlay->pango_context;
