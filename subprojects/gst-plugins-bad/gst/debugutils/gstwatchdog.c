@@ -195,7 +195,7 @@ gst_watchdog_trigger (gpointer ptr)
   GST_DEBUG_OBJECT (watchdog, "watchdog triggered");
   GST_ELEMENT_WARNING (watchdog, STREAM, FAILED, (watchdogInfo),
       ("Faulted at a certain pad"));
-
+  g_free(watchdogInfo);
   return FALSE;
 }
 
