@@ -188,12 +188,13 @@ gst_watchdog_thread (gpointer user_data)
 static gboolean
 gst_watchdog_trigger (gpointer ptr)
 {
-  GstWatchdog *watchdog = GST_WATCHDOG (ptr);
+  GstWatchdog *watchdog = GST_WATCHDOG(ptr);
+  const gchar *elementName = gst_element_get_name(GST_ELEMENT_CAST(watchdog));
+  gchar *watchdogInfo = g_strdup_printf("%s triggered watchdog", elementName);
 
   GST_DEBUG_OBJECT (watchdog, "watchdog triggered");
-
-  GST_ELEMENT_ERROR (watchdog, STREAM, FAILED, ("Watchdog triggered"),
-      ("Watchdog triggered"));
+  GST_ELEMENT_WARNING (watchdog, STREAM, FAILED, (watchdogInfo),
+      ("Faulted at a certain pad"));
 
   return FALSE;
 }
