@@ -1507,6 +1507,9 @@ gst_nv_base_enc_setup_rate_control (GstNvBaseEnc * nvenc,
   GstNvRCMode rc_mode = nvenc->rate_control_mode;
   NV_ENC_PARAMS_RC_MODE nv_rcmode;
 
+  if (nvenc->qp_map_mode >= 0)
+    rc_params->qpMapMode = nvenc->qp_map_mode;
+
   if (nvenc->bitrate)
     rc_params->averageBitRate = nvenc->bitrate * 1024;
 

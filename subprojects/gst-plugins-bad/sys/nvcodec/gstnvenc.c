@@ -704,6 +704,17 @@ gst_nv_enc_register (GstPlugin * plugin, GUID codec_id, const gchar * codec,
       min_height = 16;
     }
 
+    caps_param.capsToQuery = NV_ENC_CAPS_SUPPORT_EMPHASIS_LEVEL_MAP;
+    if (NvEncGetEncodeCaps (enc, codec_id, &caps_param,
+            &device_caps.emphasis_map_support) != NV_ENC_SUCCESS) {
+      GST_WARNING("could not query emphasis map support, setting as %i: "
+          ERROR_DETAILS, device_caps.emphasis_map_support, codec, device_index, status);
+      device_caps.emphasis_map_support = 0;
+    } else {
+      GST_DEBUG ("[device-%d %s] emphasis map support: %i",
+          device_index, codec, device_caps.emphasis_map_support);
+    }
+
     caps_param.capsToQuery = NV_ENC_CAPS_SUPPORTED_RATECONTROL_MODES;
     if (NvEncGetEncodeCaps (enc, codec_id, &caps_param,
             &device_caps.rc_modes) != NV_ENC_SUCCESS) {

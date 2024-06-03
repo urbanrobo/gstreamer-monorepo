@@ -49,6 +49,12 @@ enum
   PROP_TEMPORAL_AQ,
   PROP_BFRAMES,
   PROP_B_ADAPT,
+  PROP_ROI_START_X,
+  PROP_ROI_START_Y,
+  PROP_ROI_WIDTH,
+  PROP_ROI_HEIGHT,
+  PROP_ROI_INNER_QUALITY,
+  PROP_ROI_OUTER_QUALITY,
 };
 
 #define DEFAULT_AUD TRUE
@@ -58,6 +64,14 @@ enum
 #define DEFAULT_TEMPORAL_AQ FALSE
 #define DEFAULT_BFRAMES 0
 #define DEFAULT_B_ADAPT FALSE
+#define DEFAULT_ROI_PARAM 0
+#define MIN_ROI_PARAM 0
+#define MAX_ROI_PARAM 4096
+#define DEFAULT_ROI_QUALITY 5
+#define MIN_ROI_QUALITY 0
+#define MAX_ROI_QUALITY 5
+
+#define ROI_MACROBLOCK_SIZE 16
 
 /* captured using RTX 2080 */
 #define DOCUMENTATION_SINK_CAPS_COMM \
@@ -94,6 +108,16 @@ static void gst_nv_h264_enc_set_property (GObject * object, guint prop_id,
 static void gst_nv_h264_enc_get_property (GObject * object, guint prop_id,
     GValue * value, GParamSpec * pspec);
 static void gst_nv_h264_enc_finalize (GObject * obj);
+
+static gboolean gst_nv_h264_enc_set_properties_array (GstNvH264Enc * enc,
+    const GValue * array, guint out_array[]);
+static gboolean gst_nv_h264_enc_get_properties_array (GstNvH264Enc * enc,
+    GValue * array, guint in_array[]);
+static void gst_nv_h264_enc_create_qp_map(GstNvBaseEnc * enc,
+    NV_ENC_PIC_PARAMS * pic_params);
+static gboolean gst_nv_h264_enc_roi_change (GstNvH264Enc * enc,
+  const GValue * array);
+
 
 static void
 gst_nv_h264_enc_class_init (GstNvH264EncClass * klass, gpointer data)
@@ -228,6 +252,90 @@ gst_nv_h264_enc_class_init (GstNvH264EncClass * klass, gpointer data)
             GST_PARAM_CONDITIONALLY_AVAILABLE | G_PARAM_STATIC_STRINGS));
   }
 
+  if (device_caps->emphasis_map_support) {
+    /**
+     * GstNvH264Enc:emphasis-map-support:
+     *
+     * Emphasis Map Support
+     */
+    g_object_class_install_property (gobject_class, PROP_ROI_START_X,
+        gst_param_spec_array("roi-start-x", "ROI Start X",
+            "Array of values that indicate the starting x position "
+            "for each region of interest. It describes how the encoding "
+            "qualities will be applied. The maximum supported array "
+            "length is 32 and each value defaults to 0 if not set. "
+            "Usage example: <0, 320, 640>",
+            g_param_spec_uint ("roi-start-x", "ROI Start x",
+                "Starting x coordinate for specifying a region with configurable quality",
+                MIN_ROI_PARAM, MAX_ROI_PARAM, DEFAULT_ROI_PARAM,
+                (GParamFlags)(G_PARAM_READWRITE | GST_PARAM_MUTABLE_READY |
+                GST_PARAM_CONDITIONALLY_AVAILABLE | G_PARAM_STATIC_STRINGS)),
+                (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+    g_object_class_install_property (gobject_class, PROP_ROI_START_Y,
+        gst_param_spec_array("roi-start-y", "ROI Start Y",
+            "Array of values that indicate the starting y position "
+            "for each region of interest. It describes how the encoding "
+            "qualities will be applied. The maximum supported array "
+            "length is 32 and each value defaults to 0 if not set. "
+            "Usage example: <0, 320, 640>",
+            g_param_spec_uint ("roi-start-y", "ROI Start y",
+                "Starting y coordinate for specifying a region with configurable quality",
+                MIN_ROI_PARAM, MAX_ROI_PARAM, DEFAULT_ROI_PARAM,
+                G_PARAM_READWRITE | GST_PARAM_MUTABLE_READY |
+                GST_PARAM_CONDITIONALLY_AVAILABLE | G_PARAM_STATIC_STRINGS),
+                G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+    g_object_class_install_property (gobject_class, PROP_ROI_WIDTH,
+        gst_param_spec_array("roi-width", "ROI Width",
+            "Array of values that indicate the width for each region "
+            "of interest. It describes how the encoding qualities will "
+            "be applied. The maximum supported array length is 32 and "
+            "each value defaults to 0 if not set. "
+            "Usage example: <320, 320, 640>",
+            g_param_spec_uint ("roi-width", "ROI Width",
+                "Width of the region with configurable quality",
+                MIN_ROI_PARAM, MAX_ROI_PARAM, DEFAULT_ROI_PARAM,
+                G_PARAM_READWRITE | GST_PARAM_MUTABLE_READY |
+                GST_PARAM_CONDITIONALLY_AVAILABLE | G_PARAM_STATIC_STRINGS),
+                G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+    g_object_class_install_property (gobject_class, PROP_ROI_HEIGHT,
+        gst_param_spec_array("roi-height", "ROI Height",
+            "Array of values that indicate the height for each region "
+            "of interest. It describes how the encoding qualities will "
+            "be applied. The maximum supported array length is 32 and "
+            "each value defaults to 0 if not set. "
+            "Usage example: <320, 320, 640>",
+            g_param_spec_uint ("roi-height", "ROI Height",
+                "Height of the region with configurable quality",
+                MIN_ROI_PARAM, MAX_ROI_PARAM, DEFAULT_ROI_PARAM,
+                G_PARAM_READWRITE | GST_PARAM_MUTABLE_READY |
+                GST_PARAM_CONDITIONALLY_AVAILABLE | G_PARAM_STATIC_STRINGS),
+                G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+
+    g_object_class_install_property (gobject_class, PROP_ROI_INNER_QUALITY,
+        gst_param_spec_array("roi-inner-quality", "ROI Inner Quality",
+            "Array of values that indicate the quality for each region "
+            "of interest. It describes how the encoding qualities will "
+            "be applied. The maximum supported array length is 32 and "
+            "each value defaults to 5 if not set. The higher the value, "
+            "the better the image quality. "
+            "Usage example: <1, 1, 5>",
+            g_param_spec_uint ("roi-inner-quality", "ROI Inner Quality",
+              "Encoding quality for the inside of the region delimited by the ROI"
+              "The higher the value, the better the image quality",
+              MIN_ROI_QUALITY, MAX_ROI_QUALITY, DEFAULT_ROI_QUALITY,
+              G_PARAM_READWRITE | GST_PARAM_MUTABLE_READY |
+              GST_PARAM_CONDITIONALLY_AVAILABLE | G_PARAM_STATIC_STRINGS),
+                G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+
+    g_object_class_install_property (gobject_class, PROP_ROI_OUTER_QUALITY,
+        g_param_spec_uint ("roi-outer-quality", "ROI Outer Quality",
+            "Encoding quality for the outside of the region delimited by the ROI"
+            "The higher the value, the better the image quality",
+            MIN_ROI_QUALITY, MAX_ROI_QUALITY, DEFAULT_ROI_QUALITY,
+            G_PARAM_READWRITE | GST_PARAM_MUTABLE_READY |
+            GST_PARAM_CONDITIONALLY_AVAILABLE | G_PARAM_STATIC_STRINGS));
+  }
+
   if (cdata->is_default)
     long_name = g_strdup ("NVENC H.264 Video Encoder");
   else
@@ -270,6 +378,17 @@ gst_nv_h264_enc_init (GstNvH264Enc * nvenc)
   GstNvBaseEnc *baseenc = GST_NV_BASE_ENC (nvenc);
 
   nvenc->aud = DEFAULT_AUD;
+  for (int i = 0; i < MAX_NUM_ROIS; i++) {
+    nvenc->roi_start_x[i] = DEFAULT_ROI_PARAM;
+    nvenc->roi_start_y[i] = DEFAULT_ROI_PARAM;
+    nvenc->roi_width[i] = DEFAULT_ROI_PARAM;
+    nvenc->roi_height[i] = DEFAULT_ROI_PARAM;
+    nvenc->roi_inner_quality[i] = DEFAULT_ROI_QUALITY;
+  }
+  nvenc->roi_outer_quality = DEFAULT_ROI_QUALITY;
+
+  nvenc->qp_map = NULL;
+  nvenc->qp_map_changed = TRUE;
 
   /* device capability dependent properties */
   baseenc->weighted_pred = DEFAULT_WEIGHTED_PRED;
@@ -318,6 +437,9 @@ gst_nv_h264_enc_open (GstVideoEncoder * enc)
 static gboolean
 gst_nv_h264_enc_close (GstVideoEncoder * enc)
 {
+  GstNvH264Enc *h264enc = (GstNvH264Enc *) enc;
+  free(h264enc->qp_map);
+  h264enc->qp_map = NULL;
   return GST_VIDEO_ENCODER_CLASS (parent_class)->close (enc);
 }
 
@@ -540,6 +662,56 @@ gst_nv_h264_enc_set_encoder_config (GstNvBaseEnc * nvenc,
   return TRUE;
 }
 
+static void gst_nv_h264_enc_create_qp_map(GstNvBaseEnc * enc,
+    NV_ENC_PIC_PARAMS * pic_params)
+{
+  GstNvH264Enc *h264enc = (GstNvH264Enc *) enc;
+  int map_width = 0;
+  int map_height = 0;
+  int i, j, k, mapped_i, mapped_j = 0;
+
+  if (!h264enc->qp_map_changed){
+    pic_params->qpDeltaMap = h264enc->qp_map;
+    pic_params->qpDeltaMapSize = h264enc->qp_map_size;
+    return;
+  }
+
+  map_width  = enc->input_info.width / ROI_MACROBLOCK_SIZE;
+  map_height = enc->input_info.height / ROI_MACROBLOCK_SIZE;
+
+  if (enc->input_info.width % ROI_MACROBLOCK_SIZE != 0)
+    map_width++;
+  if (enc->input_info.height % ROI_MACROBLOCK_SIZE != 0)
+    map_height++;
+
+  h264enc->qp_map_size = map_width * map_height;
+
+  if (h264enc->qp_map == NULL)
+    h264enc->qp_map = (int8_t*) malloc(h264enc->qp_map_size * sizeof(int8_t));
+
+  for(j = 0; j < map_height; j++){
+    mapped_j = j * ROI_MACROBLOCK_SIZE;
+    for(i = 0; i < map_width; i++){
+      mapped_i = i * ROI_MACROBLOCK_SIZE;
+      h264enc->qp_map[i + j * map_width] = h264enc->roi_outer_quality;
+      for (k = 0; k < h264enc->num_rois; k++){
+        if (mapped_j > h264enc->roi_start_y[k] &&
+            mapped_i > h264enc->roi_start_x[k] &&
+            mapped_j < h264enc->roi_start_y[k] + h264enc->roi_height[k] &&
+            mapped_i < h264enc->roi_start_x[k] + h264enc->roi_width[k]){
+          h264enc->qp_map[i + j * map_width] = h264enc->roi_inner_quality[k];
+          break;
+        }
+      }
+    }
+  }
+
+  pic_params->qpDeltaMap = h264enc->qp_map;
+  pic_params->qpDeltaMapSize = h264enc->qp_map_size;
+  GST_WARNING("CALLED PIC PARAMETERS");
+  h264enc->qp_map_changed = FALSE;
+}
+
 static gboolean
 gst_nv_h264_enc_set_pic_params (GstNvBaseEnc * enc, GstVideoCodecFrame * frame,
     NV_ENC_PIC_PARAMS * pic_params)
@@ -548,7 +720,81 @@ gst_nv_h264_enc_set_pic_params (GstNvBaseEnc * enc, GstVideoCodecFrame * frame,
   pic_params->codecPicParams.h264PicParams.sliceMode = 0;
   pic_params->codecPicParams.h264PicParams.sliceModeData = 0;
 
+  gst_nv_h264_enc_create_qp_map(enc, pic_params);
+
   return TRUE;
+}
+
+static gboolean
+gst_nv_h264_enc_set_properties_array (GstNvH264Enc * enc,
+  const GValue * array, guint out_array[]){
+  guint array_size = 0;
+  gboolean ret = TRUE;
+  guint i = 0;
+
+  g_return_val_if_fail (enc, FALSE);
+  g_return_val_if_fail (array, FALSE);
+
+  array_size = gst_value_array_get_size (array);
+  if (array_size > MAX_NUM_ROIS) {
+    ret = FALSE;
+    GST_ERROR_OBJECT (enc, "Array size (%d) is larger than max value (%d)",
+        array_size, MAX_NUM_ROIS);
+    goto out;
+  }
+
+  for (i = 0; i < array_size; i++) {
+    out_array[i] = g_value_get_uint (gst_value_array_get_value (array, i));
+  }
+
+out:
+  return ret;
+}
+
+
+static gboolean
+gst_nv_h264_enc_roi_change (GstNvH264Enc * enc,
+  const GValue * array){
+  guint array_size = 0;
+  gboolean ret = TRUE;
+
+  g_return_val_if_fail (enc, FALSE);
+  g_return_val_if_fail (array, FALSE);
+
+  array_size = gst_value_array_get_size (array);
+  if (array_size > MAX_NUM_ROIS) {
+    ret = FALSE;
+    GST_ERROR_OBJECT (enc, "Array size (%d) is larger than max value (%d)",
+        array_size, MAX_NUM_ROIS);
+    goto out;
+  }
+  enc->num_rois = (array_size > enc->num_rois) ? array_size : enc->num_rois;
+  enc->qp_map_changed = TRUE;
+
+out:
+  return ret;
+}
+
+
+static gboolean
+gst_nv_h264_enc_get_properties_array (GstNvH264Enc * enc,
+  GValue * array, guint in_array[]){
+  GValue value = G_VALUE_INIT;
+  gboolean ret = TRUE;
+  guint i = 0;
+
+  g_return_val_if_fail (enc, FALSE);
+  g_return_val_if_fail (array, FALSE);
+
+  for (i = 0; i < MAX_NUM_ROIS; i++) {
+    g_value_init (&value, G_TYPE_UINT);
+    g_value_set_uint (&value, in_array[i]);
+
+    gst_value_array_append_value (array, &value);
+    g_value_unset (&value);
+  }
+
+  return ret;
 }
 
 static void
@@ -620,6 +866,56 @@ gst_nv_h264_enc_set_property (GObject * object, guint prop_id,
         nvenc->b_adapt = g_value_get_boolean (value);
       }
       break;
+    case PROP_ROI_START_X:
+      if (!device_caps->emphasis_map_support) {
+        G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+      } else {
+        gst_nv_h264_enc_set_properties_array(self, value, self->roi_start_x);
+        gst_nv_h264_enc_roi_change(self, value);
+      }
+      break;
+    case PROP_ROI_START_Y:
+      if (!device_caps->emphasis_map_support) {
+        G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+      } else {
+        gst_nv_h264_enc_set_properties_array(self, value, self->roi_start_y);
+        gst_nv_h264_enc_roi_change(self, value);
+      }
+      break;
+    case PROP_ROI_WIDTH:
+      if (!device_caps->emphasis_map_support) {
+        G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+      } else {
+        gst_nv_h264_enc_set_properties_array(self, value, self->roi_width);
+        gst_nv_h264_enc_roi_change(self, value);
+      }
+      break;
+    case PROP_ROI_HEIGHT:
+      if (!device_caps->emphasis_map_support) {
+        G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+      } else {
+        gst_nv_h264_enc_set_properties_array(self, value, self->roi_height);
+        gst_nv_h264_enc_roi_change(self, value);
+      }
+      break;
+    case PROP_ROI_INNER_QUALITY:
+      if (!device_caps->emphasis_map_support) {
+        G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+      } else {
+        gst_nv_h264_enc_set_properties_array(self, value, self->roi_inner_quality);
+        nvenc->qp_map_mode = NV_ENC_QP_MAP_EMPHASIS;
+        gst_nv_h264_enc_roi_change(self, value);
+      }
+      break;
+    case PROP_ROI_OUTER_QUALITY:
+      if (!device_caps->emphasis_map_support) {
+        G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+      } else {
+        self->roi_outer_quality = g_value_get_uint (value);
+        nvenc->qp_map_mode = NV_ENC_QP_MAP_EMPHASIS;
+        self->qp_map_changed = TRUE;
+      }
+      break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
@@ -682,6 +978,48 @@ gst_nv_h264_enc_get_property (GObject * object, guint prop_id, GValue * value,
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       } else {
         g_value_set_boolean (value, nvenc->b_adapt);
+      }
+      break;
+    case PROP_ROI_START_X:
+      if (!device_caps->emphasis_map_support) {
+        G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+      } else {
+        gst_nv_h264_enc_get_properties_array(self, value, self->roi_start_x);
+      }
+      break;
+    case PROP_ROI_START_Y:
+      if (!device_caps->emphasis_map_support) {
+        G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+      } else {
+        gst_nv_h264_enc_get_properties_array(self, value, self->roi_start_y);
+      }
+      break;
+    case PROP_ROI_WIDTH:
+      if (!device_caps->emphasis_map_support) {
+        G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+      } else {
+        gst_nv_h264_enc_get_properties_array(self, value, self->roi_width);
+      }
+      break;
+    case PROP_ROI_HEIGHT:
+      if (!device_caps->emphasis_map_support) {
+        G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+      } else {
+        gst_nv_h264_enc_get_properties_array(self, value, self->roi_height);
+      }
+      break;
+    case PROP_ROI_INNER_QUALITY:
+      if (!device_caps->emphasis_map_support) {
+        G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+      } else {
+        gst_nv_h264_enc_get_properties_array(self, value, self->roi_inner_quality);
+      }
+      break;
+    case PROP_ROI_OUTER_QUALITY:
+      if (!device_caps->emphasis_map_support) {
+        G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+      } else {
+        g_value_set_uint (value, self->roi_outer_quality);
       }
       break;
     default:
