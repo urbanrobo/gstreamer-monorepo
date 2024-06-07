@@ -55,7 +55,7 @@ enum
   PROP_ROI_HEIGHT,
   PROP_ROI_INNER_QUALITY,
   PROP_ROI_OUTER_QUALITY,
-  PROP_ENABLE_ROI,
+  PROP_QP_MAP_MODE,
 };
 
 #define DEFAULT_AUD TRUE
@@ -71,7 +71,7 @@ enum
 #define DEFAULT_ROI_QUALITY 5
 #define MIN_ROI_QUALITY -5
 #define MAX_ROI_QUALITY 5
-#define DEFAULT_ENABLE_ROI TRUE
+#define DEFAULT_QP_MAP_MODE NV_ENC_QP_MAP_DISABLED
 
 #define ROI_MACROBLOCK_SIZE 16
 
@@ -119,7 +119,24 @@ static void gst_nv_h264_enc_set_qp_map (GstNvBaseEnc * enc,
     NV_ENC_PIC_PARAMS * pic_params);
 static gboolean gst_nv_h264_enc_roi_change (GstNvH264Enc * enc,
     const GValue * array);
+GType qp_map_mode_type_get_type (void);
 
+GType
+qp_map_mode_type_get_type (void)
+{
+  static GType qp_map_mode_type_id = 0;
+  static const GEnumValue values[] = {
+    {NV_ENC_QP_MAP_DISABLED, "QP Map Disabled", "DISABLED"},
+    {NV_ENC_QP_MAP_EMPHASIS, "QP Map Emphasis", "EMPHASIS"},
+    {NV_ENC_QP_MAP_DELTA, "QP Map Delta", "DELTA"},
+    {0, NULL, NULL}
+  };
+
+  if (!qp_map_mode_type_id) {
+    qp_map_mode_type_id = g_enum_register_static ("QPMapMode", values);
+  }
+  return qp_map_mode_type_id;
+}
 
 static void
 gst_nv_h264_enc_class_init (GstNvH264EncClass * klass, gpointer data)
@@ -318,8 +335,9 @@ gst_nv_h264_enc_class_init (GstNvH264EncClass * klass, gpointer data)
             "of interest. It describes how the encoding qualities will "
             "be applied. The maximum supported array length is 32 and "
             "each value defaults to 5 if not set. The higher the value, "
-            "the better the image quality. "
-            "Usage example: <1, 1, 5>",
+            "the better the image quality. For EMPHASIS mode it accepts "
+            "values from 0 to 5, in DELTA mode it ranges from -5 to 5 "
+            "Usage example: <1, -5, 5>",
             g_param_spec_int ("roi-inner-quality", "ROI Inner Quality",
                 "Encoding quality for the inside of the region delimited by the ROI"
                 "The higher the value, the better the image quality",
@@ -335,10 +353,20 @@ gst_nv_h264_enc_class_init (GstNvH264EncClass * klass, gpointer data)
             MIN_ROI_QUALITY, MAX_ROI_QUALITY, DEFAULT_ROI_QUALITY,
             G_PARAM_READWRITE | GST_PARAM_MUTABLE_READY |
             GST_PARAM_CONDITIONALLY_AVAILABLE | G_PARAM_STATIC_STRINGS));
-    g_object_class_install_property (gobject_class, PROP_ENABLE_ROI,
-        g_param_spec_boolean ("enable-roi", "Enable ROI",
-            "General flag to enable or disable ROI encoding",
-            DEFAULT_ENABLE_ROI,
+    g_object_class_install_property (gobject_class, PROP_QP_MAP_MODE,
+        g_param_spec_enum ("qp-map-mode", "QP Map Mode",
+            "Property to select which qp map mode to enable. "
+            "The EMPHASIS map considers the QP chosen by rate control to "
+            "compute the QP modifier, which is then applied on top of the "
+            "of the QP chosen by the rate control. It receives unsigned "
+            "values. Higher values mean higher quality in this mode. It "
+            "can be seen as specifying which areas are of more interest. "
+            "The DELTA map specifies the QP modifier directly and it is "
+            "applied on top of the QP chosen by the rate control. It "
+            "receives signed values. The lower the values the less "
+            "quantization and the better quality.",
+            qp_map_mode_type_get_type (),
+            DEFAULT_QP_MAP_MODE,
             G_PARAM_READWRITE | GST_PARAM_MUTABLE_PLAYING |
             G_PARAM_STATIC_STRINGS));
   }
@@ -396,7 +424,7 @@ gst_nv_h264_enc_init (GstNvH264Enc * nvenc)
 
   nvenc->qp_map = NULL;
   nvenc->qp_map_changed = TRUE;
-  nvenc->enable_roi = TRUE;
+  baseenc->qp_map_mode = DEFAULT_QP_MAP_MODE;
   nvenc->num_rois = 0;
 
   /* device capability dependent properties */
@@ -675,15 +703,8 @@ static void
 gst_nv_h264_enc_set_qp_map (GstNvBaseEnc * enc, NV_ENC_PIC_PARAMS * pic_params)
 {
   GstNvH264Enc *h264enc = (GstNvH264Enc *) enc;
-  int map_width = 0;
-  int map_height = 0;
+  int map_width, map_height, map_size = 0;
   int i, j, k, mapped_i, mapped_j = 0;
-
-  if (!h264enc->qp_map_changed) {
-    pic_params->qpDeltaMap = h264enc->qp_map;
-    pic_params->qpDeltaMapSize = h264enc->qp_map_size;
-    return;
-  }
 
   map_width = enc->input_info.width / ROI_MACROBLOCK_SIZE;
   map_height = enc->input_info.height / ROI_MACROBLOCK_SIZE;
@@ -693,11 +714,18 @@ gst_nv_h264_enc_set_qp_map (GstNvBaseEnc * enc, NV_ENC_PIC_PARAMS * pic_params)
   if (enc->input_info.height % ROI_MACROBLOCK_SIZE != 0)
     map_height++;
 
-  h264enc->qp_map_size = map_width * map_height;
+  map_size = map_width * map_height;
+  if (map_size == h264enc->qp_map_size && !h264enc->qp_map_changed) {
+    pic_params->qpDeltaMap = h264enc->qp_map;
+    pic_params->qpDeltaMapSize = h264enc->qp_map_size;
+    return;
+  }
+  h264enc->qp_map_size = map_size;
 
-  if (h264enc->qp_map == NULL)
-    h264enc->qp_map =
-        (int8_t *) malloc (h264enc->qp_map_size * sizeof (int8_t));
+  if (h264enc->qp_map != NULL)
+    free (h264enc->qp_map);
+
+  h264enc->qp_map = (int8_t *) malloc (h264enc->qp_map_size * sizeof (int8_t));
 
   for (j = 0; j < map_height; j++) {
     mapped_j = j * ROI_MACROBLOCK_SIZE;
@@ -725,12 +753,11 @@ static gboolean
 gst_nv_h264_enc_set_pic_params (GstNvBaseEnc * enc, GstVideoCodecFrame * frame,
     NV_ENC_PIC_PARAMS * pic_params)
 {
-  GstNvH264Enc *h264enc = (GstNvH264Enc *) enc;
   /* encode whole picture in one single slice */
   pic_params->codecPicParams.h264PicParams.sliceMode = 0;
   pic_params->codecPicParams.h264PicParams.sliceModeData = 0;
 
-  if (h264enc->enable_roi) {
+  if (enc->qp_map_mode != 0) {
     gst_nv_h264_enc_set_qp_map (enc, pic_params);
   }
 
@@ -918,7 +945,6 @@ gst_nv_h264_enc_set_property (GObject * object, guint prop_id,
       } else {
         gst_nv_h264_enc_set_properties_array (self, value,
             self->roi_inner_quality);
-        nvenc->qp_map_mode = NV_ENC_QP_MAP_EMPHASIS;
         gst_nv_h264_enc_roi_change (self, value);
       }
       break;
@@ -927,13 +953,11 @@ gst_nv_h264_enc_set_property (GObject * object, guint prop_id,
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       } else {
         self->roi_outer_quality = g_value_get_int (value);
-        nvenc->qp_map_mode = NV_ENC_QP_MAP_EMPHASIS;
         self->qp_map_changed = TRUE;
       }
       break;
-    case PROP_ENABLE_ROI:
-      self->enable_roi = g_value_get_boolean (value);
-      nvenc->qp_map_mode = NV_ENC_QP_MAP_EMPHASIS;
+    case PROP_QP_MAP_MODE:
+      nvenc->qp_map_mode = g_value_get_enum (value);
       self->qp_map_changed = TRUE;
       break;
     default:
@@ -1043,8 +1067,8 @@ gst_nv_h264_enc_get_property (GObject * object, guint prop_id, GValue * value,
         g_value_set_int (value, self->roi_outer_quality);
       }
       break;
-    case PROP_ENABLE_ROI:
-      g_value_set_boolean (value, self->enable_roi);
+    case PROP_QP_MAP_MODE:
+      g_value_set_enum (value, nvenc->qp_map_mode);
       break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
