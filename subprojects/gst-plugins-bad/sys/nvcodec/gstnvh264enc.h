@@ -22,10 +22,23 @@
 
 #include "gstnvbaseenc.h"
 
+#define MAX_NUM_ROIS 32
+
 typedef struct {
   GstNvBaseEnc base_nvenc;
   /* properties */
   gboolean aud;
+  gint roi_start_x[MAX_NUM_ROIS];
+  gint roi_start_y[MAX_NUM_ROIS];
+  gint roi_width[MAX_NUM_ROIS];
+  gint roi_height[MAX_NUM_ROIS];
+  gint roi_inner_quality[MAX_NUM_ROIS];
+  gint roi_outer_quality;
+  guint qp_map_size;
+  int8_t* qp_map;
+  gboolean qp_map_changed;
+  gboolean enable_roi;
+  guint num_rois;
 } GstNvH264Enc;
 
 typedef struct {
