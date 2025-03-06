@@ -192,6 +192,8 @@ gst_gl_format_from_video_info (GstGLContext * context,
     case GST_VIDEO_FORMAT_NV21:
     case GST_VIDEO_FORMAT_NV16:
     case GST_VIDEO_FORMAT_NV61:
+    case GST_VIDEO_FORMAT_NV12_16L32S:
+    case GST_VIDEO_FORMAT_NV12_4L4:
       n_plane_components = plane == 0 ? 1 : 2;
       break;
     case GST_VIDEO_FORMAT_AV12:
@@ -493,7 +495,7 @@ gst_gl_format_is_supported (GstGLContext * context, GstGLFormat format)
  * gst_gl_texture_target_to_string:
  * @target: a #GstGLTextureTarget
  *
- * Returns: the stringified version of @target or %NULL
+ * Returns: (nullable): the stringified version of @target or %NULL
  */
 const gchar *
 gst_gl_texture_target_to_string (GstGLTextureTarget target)
@@ -581,7 +583,7 @@ gst_gl_texture_target_from_gl (guint target)
  * gst_gl_texture_target_to_buffer_pool_option:
  * @target: a #GstGLTextureTarget
  *
- * Returns: a string representing the @GstBufferPoolOption specified by @target
+ * Returns: (nullable): a string representing the @GstBufferPoolOption specified by @target
  */
 const gchar *
 gst_gl_texture_target_to_buffer_pool_option (GstGLTextureTarget target)

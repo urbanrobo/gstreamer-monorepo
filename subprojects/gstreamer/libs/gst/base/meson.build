@@ -46,7 +46,7 @@ gst_base = library('gstbase-@0@'.format(apiversion),
   darwin_versions : osxversion,
   install : true,
   include_directories : [configinc, libsinc],
-  dependencies : [gobject_dep, glib_dep, gst_dep],
+  dependencies : [gst_dep],
 )
 
 library_def = {'lib': gst_base}
@@ -82,7 +82,7 @@ if build_gir
     gst_base_gen_sources += [gst_base_gir]
   endif
 endif
-libraries += [[pkg_name, library_def]]
+gst_libraries += [[pkg_name, library_def]]
 
 gst_base_dep = declare_dependency(link_with : gst_base,
   include_directories : [libsinc],

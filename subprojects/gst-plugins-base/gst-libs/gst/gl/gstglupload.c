@@ -192,6 +192,7 @@ _caps_intersect_texture_target (GstCaps * caps, GstGLTextureTarget target_mask)
 typedef enum
 {
   METHOD_FLAG_CAN_SHARE_CONTEXT = 1,
+  METHOD_FLAG_CAN_ACCEPT_RAW = 2,       /* This method can accept raw memory input caps */
 } GstGLUploadMethodFlags;
 
 struct _UploadMethod
@@ -554,15 +555,10 @@ _dma_buf_upload_transform_caps (gpointer impl, GstGLContext * context,
     ret = tmp;
   } else {
     gint i, n;
-    GstCaps *tmp;
 
     ret =
         _set_caps_features_with_passthrough (caps,
         GST_CAPS_FEATURE_MEMORY_DMABUF, passthrough);
-    tmp =
-        _set_caps_features_with_passthrough (caps,
-        GST_CAPS_FEATURE_MEMORY_SYSTEM_MEMORY, passthrough);
-    gst_caps_append (ret, tmp);
 
     n = gst_caps_get_size (ret);
     for (i = 0; i < n; i++) {
@@ -647,8 +643,7 @@ _dma_buf_upload_accept (gpointer impl, GstBuffer * buffer, GstCaps * in_caps,
   if (dmabuf->target == GST_GL_TEXTURE_TARGET_EXTERNAL_OES &&
       !gst_gl_context_check_feature (dmabuf->upload->context,
           "GL_OES_EGL_image_external")) {
-    GST_DEBUG_OBJECT (dmabuf->upload,
-        "no EGL_KHR_image_base_external extension");
+    GST_DEBUG_OBJECT (dmabuf->upload, "no GL_OES_EGL_image_external extension");
     return FALSE;
   }
 
@@ -680,6 +675,21 @@ _dma_buf_upload_accept (gpointer impl, GstBuffer * buffer, GstCaps * in_caps,
     dmabuf->out_caps = out_caps;
     if (!gst_video_info_from_caps (out_info, out_caps))
       return FALSE;
+
+    /*
+     * When we zero-copy tiles, we need to propagate the strides, which contains
+     * the tile dimension. This is because the shader needs to know the padded
+     * size in order to correctly sample into these special buffer.
+     */
+    if (meta && GST_VIDEO_FORMAT_INFO_IS_TILED (out_info->finfo)) {
+      out_info->width = meta->width;
+      out_info->height = meta->height;
+
+      for (i = 0; i < meta->n_planes; i++) {
+        out_info->offset[i] = meta->offset[i];
+        out_info->stride[i] = meta->stride[i];
+      }
+    }
   }
 
   if (dmabuf->params)
@@ -832,7 +842,7 @@ _dma_buf_upload_free (gpointer impl)
 
 static const UploadMethod _dma_buf_upload = {
   "Dmabuf",
-  0,
+  METHOD_FLAG_CAN_ACCEPT_RAW,
   &_dma_buf_upload_caps,
   &_dma_buf_upload_new,
   &_dma_buf_upload_transform_caps,
@@ -912,10 +922,6 @@ _direct_dma_buf_upload_transform_caps (gpointer impl, GstGLContext * context,
     ret =
         _set_caps_features_with_passthrough (caps,
         GST_CAPS_FEATURE_MEMORY_DMABUF, passthrough);
-    tmp =
-        _set_caps_features_with_passthrough (caps,
-        GST_CAPS_FEATURE_MEMORY_SYSTEM_MEMORY, passthrough);
-    gst_caps_append (ret, tmp);
 
     g_value_init (&formats, GST_TYPE_LIST);
     gst_value_deserialize (&formats, format_str);
@@ -943,7 +949,7 @@ _direct_dma_buf_upload_transform_caps (gpointer impl, GstGLContext * context,
 
 static const UploadMethod _direct_dma_buf_upload = {
   "DirectDmabuf",
-  0,
+  METHOD_FLAG_CAN_ACCEPT_RAW,
   &_dma_buf_upload_caps,
   &_direct_dma_buf_upload_new,
   &_direct_dma_buf_upload_transform_caps,
@@ -965,7 +971,7 @@ _direct_dma_buf_external_upload_new (GstGLUpload * upload)
 
 static const UploadMethod _direct_dma_buf_external_upload = {
   "DirectDmabufExternal",
-  0,
+  METHOD_FLAG_CAN_ACCEPT_RAW,
   &_dma_buf_upload_caps,
   &_direct_dma_buf_external_upload_new,
   &_direct_dma_buf_upload_transform_caps,
@@ -1502,13 +1508,8 @@ _directviv_upload_transform_caps (gpointer impl, GstGLContext * context,
     gst_caps_unref (ret);
     ret = tmp;
   } else {
-    GstCaps *tmp;
-    tmp = gst_caps_from_string (GST_VIDEO_CAPS_MAKE_WITH_FEATURES
+    ret = gst_caps_from_string (GST_VIDEO_CAPS_MAKE_WITH_FEATURES
         (GST_CAPS_FEATURE_MEMORY_SYSTEM_MEMORY, GST_GL_DIRECTVIV_FORMAT));
-    ret =
-        _set_caps_features_with_passthrough (tmp,
-        GST_CAPS_FEATURE_MEMORY_SYSTEM_MEMORY, passthrough);
-    gst_caps_unref (tmp);
   }
 
   gst_caps_features_free (passthrough);
@@ -2243,7 +2244,9 @@ static const UploadMethod *upload_methods[] = { &_gl_memory_upload,
 #if defined(HAVE_NVMM)
   &_nvmm_upload,
 #endif /* HAVE_NVMM */
-  &_upload_meta_upload, &_raw_data_upload
+  &_upload_meta_upload,
+  /* Raw data must always be last / least preferred */
+  &_raw_data_upload
 };
 
 static GMutex upload_global_lock;
@@ -2366,7 +2369,21 @@ gst_gl_upload_transform_caps (GstGLUpload * upload, GstGLContext * context,
   if (upload->priv->method) {
     tmp = upload->priv->method->transform_caps (upload->priv->method_impl,
         context, direction, caps);
+
     if (tmp) {
+      /* If we're generating sink pad caps, make sure to include raw caps if needed by
+       * the current method */
+      if (direction == GST_PAD_SRC
+          && (upload->priv->method->flags & METHOD_FLAG_CAN_ACCEPT_RAW)) {
+        GstCapsFeatures *passthrough =
+            gst_caps_features_from_string
+            (GST_CAPS_FEATURE_META_GST_VIDEO_OVERLAY_COMPOSITION);
+        GstCaps *raw_tmp = _set_caps_features_with_passthrough (tmp,
+            GST_CAPS_FEATURE_MEMORY_SYSTEM_MEMORY, passthrough);
+        gst_caps_append (tmp, raw_tmp);
+        gst_caps_features_free (passthrough);
+      }
+
       if (filter) {
         result =
             gst_caps_intersect_full (filter, tmp, GST_CAPS_INTERSECT_FIRST);
@@ -2544,6 +2561,9 @@ gst_gl_upload_perform_with_buffer (GstGLUpload * upload, GstBuffer * buffer,
   GstGLUploadReturn ret = GST_GL_UPLOAD_ERROR;
   GstBuffer *outbuf = NULL;
   gpointer last_impl = upload->priv->method_impl;
+#if !defined (GST_DISABLE_DEBUG)
+  const UploadMethod *last_method = upload->priv->method;
+#endif
 
   g_return_val_if_fail (GST_IS_GL_UPLOAD (upload), FALSE);
   g_return_val_if_fail (GST_IS_BUFFER (buffer), FALSE);
@@ -2589,14 +2609,25 @@ restart:
     gst_buffer_replace (&outbuf, NULL);
     goto restart;
   } else if (ret == GST_GL_UPLOAD_DONE || ret == GST_GL_UPLOAD_RECONFIGURE) {
-    if (last_impl != upload->priv->method_impl) {
-      GstCaps *caps = gst_gl_upload_transform_caps (upload, upload->context,
-          GST_PAD_SINK, upload->priv->in_caps, NULL);
-      if (!gst_caps_is_subset (caps, upload->priv->out_caps)) {
+    if (last_impl != upload->priv->method_impl
+        && upload->priv->method_impl != NULL) {
+      /* Transform the input caps using the new method. If they are compatible with the
+       * existing upload method, we can skip reconfiguration */
+      GstCaps *caps =
+          upload->priv->method->transform_caps (upload->priv->method_impl,
+          upload->context, GST_PAD_SINK, upload->priv->in_caps);
+
+      GST_LOG_OBJECT (upload,
+          "Changing uploader from %s to %s with src caps %" GST_PTR_FORMAT
+          " and old src caps %" GST_PTR_FORMAT,
+          last_method != NULL ? last_method->name : "None",
+          upload->priv->method->name, caps, upload->priv->out_caps);
+
+      if (caps == NULL || !gst_caps_is_subset (caps, upload->priv->out_caps)) {
         gst_buffer_replace (&outbuf, NULL);
         ret = GST_GL_UPLOAD_RECONFIGURE;
       }
-      gst_caps_unref (caps);
+      gst_caps_replace (&caps, NULL);
     }
     /* we are done */
   } else {

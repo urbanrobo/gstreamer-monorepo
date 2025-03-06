@@ -111,6 +111,9 @@ GType test_src_get_type (void);
 #define test_src_parent_class parent_class
 G_DEFINE_TYPE (TestSrc, test_src, GST_TYPE_PUSH_SRC);
 
+#define TEST_SRC(obj) \
+  (G_TYPE_CHECK_INSTANCE_CAST ((obj), test_src_get_type(), TestSrc))
+
 #define ROUND_UP_TO_10(x) (((x + 10 - 1) / 10) * 10)
 #define ROUND_DOWN_TO_10(x) (x - (x % 10))
 
@@ -151,8 +154,8 @@ test_src_create (GstPushSrc * psrc, GstBuffer ** buffer)
     duration =
         MAX (duration * 10,
         duration * ROUND_UP_TO_10 (src->trickmode_interval));
-  } else if ((src->segment->
-          flags & GST_SEGMENT_FLAG_TRICKMODE_FORWARD_PREDICTED)) {
+  } else if ((src->
+          segment->flags & GST_SEGMENT_FLAG_TRICKMODE_FORWARD_PREDICTED)) {
     duration *= 5;
   }
 
@@ -194,7 +197,7 @@ test_src_create (GstPushSrc * psrc, GstBuffer ** buffer)
     real_time += (G_GUINT64_CONSTANT (2208988800) * GST_SECOND);
     src->ntp_offset = real_time - clock_time;
 
-    s = gst_structure_new ("GstNtpOffset",
+    s = gst_structure_new ("GstOnvifTimestamp",
         "ntp-offset", G_TYPE_UINT64, src->ntp_offset,
         "discont", G_TYPE_BOOLEAN, FALSE, NULL);
 
@@ -218,7 +221,7 @@ test_src_create (GstPushSrc * psrc, GstBuffer ** buffer)
       next_n_frames = (n_frames / 10 - n_gops) * 10;
 
       src->segment->position = next_n_frames * GST_MSECOND;
-      s = gst_structure_new ("GstNtpOffset",
+      s = gst_structure_new ("GstOnvifTimestamp",
           "ntp-offset", G_TYPE_UINT64, src->ntp_offset,
           "discont", G_TYPE_BOOLEAN, TRUE, NULL);
 
@@ -239,6 +242,17 @@ test_src_init (TestSrc * src)
   gst_base_src_set_automatic_eos (GST_BASE_SRC (src), FALSE);
   src->segment = NULL;
   src->ntp_offset = GST_CLOCK_TIME_NONE;
+}
+
+static void
+test_src_finalize (GObject * obj)
+{
+  TestSrc *src = TEST_SRC (obj);
+
+  if (src->segment != NULL)
+    gst_segment_free (src->segment);
+
+  G_OBJECT_CLASS (test_src_parent_class)->finalize (obj);
 }
 
 /*
@@ -276,7 +290,7 @@ test_src_do_seek (GstBaseSrc * bsrc, GstSegment * segment)
 
   if (src->segment->rate < 0) {
     guint64 n_frames =
-        ROUND_DOWN_TO_10 (gst_util_uint64_scale (src->segment->stop, 1000,
+        ROUND_DOWN_TO_10 (gst_util_uint64_scale (src->segment->stop - 1, 1000,
             GST_SECOND));
 
     src->segment->position = n_frames * GST_MSECOND;
@@ -304,6 +318,8 @@ test_src_event (GstBaseSrc * bsrc, GstEvent * event)
 static void
 test_src_class_init (TestSrcClass * klass)
 {
+  G_OBJECT_CLASS (klass)->finalize = test_src_finalize;
+
   gst_element_class_add_static_pad_template (GST_ELEMENT_CLASS (klass),
       &test_src_template);
   GST_PUSH_SRC_CLASS (klass)->create = test_src_create;
@@ -457,6 +473,7 @@ test_response_x_onvif_track (GstRTSPClient * client, GstRTSPMessage * response,
 
     fail_unless_equals_string (gst_sdp_media_get_attribute_val (smedia,
             "x-onvif-track"), x_onvif_track);
+    g_free (x_onvif_track);
   }
 
   gst_sdp_message_free (sdp);
@@ -555,6 +572,219 @@ typedef struct
 #define EXTENSION_SIZE 3
 
 static gboolean
+read_length (guint8 * data, guint size, guint * length, guint * skip)
+{
+  guint b, len, offset;
+
+  /* start reading the length, we need this to skip to the data later */
+  len = offset = 0;
+  do {
+    if (offset >= size)
+      return FALSE;
+    b = data[offset++];
+    len = (len << 7) | (b & 0x7f);
+  } while (b & 0x80);
+
+  /* check remaining buffer size */
+  if (size - offset < len)
+    return FALSE;
+
+  *length = len;
+  *skip = offset;
+
+  return TRUE;
+}
+
+static GstCaps *
+read_caps (GstBuffer * buf, guint * skip)
+{
+  guint offset, length;
+  GstCaps *caps;
+  GstMapInfo map;
+
+  gst_buffer_map (buf, &map, GST_MAP_READ);
+
+  if (!read_length (map.data, map.size, &length, &offset))
+    goto too_small;
+
+  if (length == 0 || map.data[offset + length - 1] != '\0')
+    goto invalid_buffer;
+
+  /* parse and store in cache */
+  caps = gst_caps_from_string ((gchar *) & map.data[offset]);
+  gst_buffer_unmap (buf, &map);
+
+  *skip = length + offset;
+
+  return caps;
+
+too_small:
+  {
+    gst_buffer_unmap (buf, &map);
+    return NULL;
+  }
+invalid_buffer:
+  {
+    gst_buffer_unmap (buf, &map);
+    return NULL;
+  }
+}
+
+static GstEvent *
+read_event (guint type, GstBuffer * buf, guint * skip)
+{
+  guint offset, length;
+  GstStructure *s;
+  GstEvent *event;
+  GstEventType etype;
+  gchar *end;
+  GstMapInfo map;
+
+  gst_buffer_map (buf, &map, GST_MAP_READ);
+
+  if (!read_length (map.data, map.size, &length, &offset))
+    goto too_small;
+
+  if (length == 0)
+    goto invalid_buffer;
+  /* backward compat, old payloader did not put 0-byte at the end */
+  if (map.data[offset + length - 1] != '\0'
+      && map.data[offset + length - 1] != ';')
+    goto invalid_buffer;
+
+  /* parse */
+  s = gst_structure_from_string ((gchar *) & map.data[offset], &end);
+  gst_buffer_unmap (buf, &map);
+
+  if (s == NULL)
+    goto parse_failed;
+
+  switch (type) {
+    case 1:
+      etype = GST_EVENT_TAG;
+      break;
+    case 2:
+      etype = GST_EVENT_CUSTOM_DOWNSTREAM;
+      break;
+    case 3:
+      etype = GST_EVENT_CUSTOM_BOTH;
+      break;
+    case 4:
+      etype = GST_EVENT_STREAM_START;
+      break;
+    default:
+      goto unknown_event;
+  }
+  event = gst_event_new_custom (etype, s);
+
+  *skip = length + offset;
+
+  return event;
+
+too_small:
+  {
+    gst_buffer_unmap (buf, &map);
+    return NULL;
+  }
+invalid_buffer:
+  {
+    gst_buffer_unmap (buf, &map);
+    return NULL;
+  }
+parse_failed:
+  {
+    return NULL;
+  }
+unknown_event:
+  {
+    gst_structure_free (s);
+    return NULL;
+  }
+}
+
+static gboolean
+parse_gstpay_payload (GstRTPBuffer * rtp, GstEvent ** event, GstCaps ** caps,
+    GstBuffer ** outbuf)
+{
+  gint payload_len;
+  guint8 *payload;
+  guint avail, offset;
+
+  payload_len = gst_rtp_buffer_get_payload_len (rtp);
+
+  if (payload_len <= 8)
+    goto empty_packet;
+
+  /* We don't need to deal with fragmentation */
+  fail_unless (gst_rtp_buffer_get_marker (rtp));
+
+  payload = gst_rtp_buffer_get_payload (rtp);
+
+  *outbuf = gst_rtp_buffer_get_payload_subbuffer (rtp, 8, -1);
+  avail = gst_buffer_get_size (*outbuf);
+  offset = 0;
+
+  if (payload[0] & 0x80) {
+    guint size;
+
+    /* C bit, we have inline caps */
+    *caps = read_caps (*outbuf, &size);
+    if (*caps == NULL)
+      goto no_caps;
+
+    /* skip caps */
+    offset += size;
+    avail -= size;
+  }
+
+  if (payload[1]) {
+    guint size;
+
+    /* we have an event */
+    *event = read_event (payload[1], *outbuf, &size);
+    if (*event == NULL)
+      goto no_event;
+
+    /* no buffer after event */
+    avail = 0;
+  }
+
+  if (avail) {
+    if (offset != 0) {
+      GstBuffer *temp;
+
+      temp =
+          gst_buffer_copy_region (*outbuf, GST_BUFFER_COPY_ALL, offset, avail);
+
+      gst_buffer_unref (*outbuf);
+      *outbuf = temp;
+    }
+
+    if (payload[0] & 0x8)
+      GST_BUFFER_FLAG_SET (*outbuf, GST_BUFFER_FLAG_DELTA_UNIT);
+  } else {
+    gst_buffer_unref (*outbuf);
+    *outbuf = NULL;
+  }
+
+  return TRUE;
+
+empty_packet:
+  return FALSE;
+
+no_caps:
+  {
+    gst_buffer_unref (*outbuf);
+    return FALSE;
+  }
+no_event:
+  {
+    gst_buffer_unref (*outbuf);
+    return FALSE;
+  }
+}
+
+static gboolean
 test_play_response_200_and_check_data (GstRTSPClient * client,
     GstRTSPMessage * response, gboolean close, gpointer user_data)
 {
@@ -583,37 +813,63 @@ test_play_response_200_and_check_data (GstRTSPClient * client,
       guint16 bits;
       guint wordlen;
       guint8 flags;
-      gint32 expected_interval;
-      gboolean is_custom_event = FALSE;
+      gint32 expected_interval = 0;
+      GstBuffer *outbuf = NULL;
+      GstCaps *outcaps = NULL;
+      GstEvent *outevent = NULL;
 
       fail_unless (gst_rtsp_message_get_body (response, &body,
               &body_size) == GST_RTSP_OK);
 
       buf = gst_rtp_buffer_new_copy_data (body, body_size);
 
-      switch (body_size) {
-        case 115:              /* Ignore our serialized custom events */
-          is_custom_event = TRUE;
-          break;
-        case 56:
-          expected_interval = check->expected_i_frame_ts_interval;
-          check->n_i_frames += 1;
-          break;
-        case 46:
-          expected_interval = check->expected_ts_interval;
-          check->n_p_frames += 1;
-          break;
-        case 41:
-          expected_interval = check->expected_ts_interval;
-          check->n_b_frames += 1;
-          break;
-        default:
-          fail ("Invalid body size %u", body_size);
+      fail_unless (gst_rtp_buffer_map (buf, GST_MAP_READ, &rtp));
+
+      fail_unless (parse_gstpay_payload (&rtp, &outevent, &outcaps, &outbuf));
+
+      if (outbuf) {
+        switch (gst_buffer_get_size (outbuf)) {
+          case 20:
+            expected_interval = check->expected_i_frame_ts_interval;
+            check->n_i_frames += 1;
+            break;
+          case 10:
+            expected_interval = check->expected_ts_interval;
+            check->n_p_frames += 1;
+            break;
+          case 5:
+            expected_interval = check->expected_ts_interval;
+            check->n_b_frames += 1;
+            break;
+          default:
+            fail ("Invalid payload size %u", gst_buffer_get_size (outbuf));
+        }
+
+        gst_buffer_unref (outbuf);
       }
 
-      if (!is_custom_event) {
-        fail_unless (gst_rtp_buffer_map (buf, GST_MAP_READ, &rtp));
+      if (outcaps) {
+        gst_caps_unref (outcaps);
+      }
 
+      if (outevent) {
+        const GstStructure *s;
+
+        fail_unless (GST_EVENT_TYPE (outevent) == GST_EVENT_CUSTOM_DOWNSTREAM);
+        s = gst_event_get_structure (outevent);
+        fail_unless (gst_structure_has_name (s, "GstOnvifTimestamp"));
+        gst_event_unref (outevent);
+      }
+
+
+      fail_unless (gst_rtp_buffer_get_extension_data (&rtp, &bits,
+              (gpointer) & data, &wordlen));
+
+      fail_unless (bits == EXTENSION_ID && wordlen == EXTENSION_SIZE);
+
+      flags = GST_READ_UINT8 (data + 8);
+
+      if (expected_interval) {
         if (check->previous_ts) {
           fail_unless_equals_int (gst_rtp_buffer_get_timestamp (&rtp) -
               check->previous_ts, expected_interval);
@@ -622,36 +878,25 @@ test_play_response_200_and_check_data (GstRTSPClient * client,
         check->previous_ts = gst_rtp_buffer_get_timestamp (&rtp);
         check->n_buffers += 1;
 
-        fail_unless (gst_rtp_buffer_get_extension_data (&rtp, &bits,
-                (gpointer) & data, &wordlen));
-
-        fail_unless (bits == EXTENSION_ID && wordlen == EXTENSION_SIZE);
-
-        flags = GST_READ_UINT8 (data + 8);
-
-        gst_rtp_buffer_unmap (&rtp);
-
         if (flags & (1 << 7)) {
           check->n_clean_points += 1;
         }
-
-        /* T flag is set, we are done */
-        if (flags & (1 << 4)) {
-          fail_unless_equals_int (check->expected_n_buffers, check->n_buffers);
-          fail_unless_equals_int (check->expected_n_i_frames,
-              check->n_i_frames);
-          fail_unless_equals_int (check->expected_n_p_frames,
-              check->n_p_frames);
-          fail_unless_equals_int (check->expected_n_b_frames,
-              check->n_b_frames);
-          fail_unless_equals_int (check->expected_n_clean_points,
-              check->n_clean_points);
-
-          terminal_frame = TRUE;
-
-        }
       }
 
+      /* T flag is set, we are done */
+      if (flags & (1 << 4)) {
+        fail_unless_equals_int (check->expected_n_buffers, check->n_buffers);
+        fail_unless_equals_int (check->expected_n_i_frames, check->n_i_frames);
+        fail_unless_equals_int (check->expected_n_p_frames, check->n_p_frames);
+        fail_unless_equals_int (check->expected_n_b_frames, check->n_b_frames);
+        fail_unless_equals_int (check->expected_n_clean_points,
+            check->n_clean_points);
+
+        terminal_frame = TRUE;
+
+      }
+
+      gst_rtp_buffer_unmap (&rtp);
       gst_buffer_unref (buf);
     } else if (channel == 1) {  /* RTCP */
       GstBuffer *buf;

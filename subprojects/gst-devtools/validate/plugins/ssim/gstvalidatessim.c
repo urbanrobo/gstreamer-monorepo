@@ -180,6 +180,8 @@ runner_stopping (GstValidateRunner * runner, ValidateSsimOverride * self)
     else
       npassed++;
 
+    g_free (ref_path);
+
     min_avg = MIN (min_avg, mssim);
     min_min = MIN (lowest, min_min);
     total_avg += mssim;
@@ -583,8 +585,7 @@ _should_dump_buffer (ValidateSsimOverride * self,
   if (priv->recurrence == 0)
     return FALSE;
 
-  if (position > priv->last_dump_position ?
-      position - priv->last_dump_position : 0 >= priv->recurrence)
+  if (GST_CLOCK_DIFF (priv->last_dump_position, position) >= priv->recurrence)
     return TRUE;
 
   return FALSE;

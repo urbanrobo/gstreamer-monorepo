@@ -298,7 +298,6 @@ _find_structure_incompatible_fields (GQuark field_id, const GValue * value,
     StructureIncompatibleFieldsInfo * info)
 {
   gchar *value_str, *filter_str;
-  GValue intersect = { 0, };
   const GValue *filter_value = gst_structure_id_get_value (info->filter,
       field_id);
 
@@ -320,8 +319,7 @@ _find_structure_incompatible_fields (GQuark field_id, const GValue * value,
     return TRUE;
   }
 
-  if (gst_value_intersect (&intersect, value, filter_value)) {
-    g_value_reset (&intersect);
+  if (gst_value_intersect (NULL, value, filter_value)) {
     g_free (value_str);
     g_free (filter_str);
 
@@ -825,23 +823,25 @@ done:
 /**
  * gst_validate_pipeline_monitor_new:
  * @pipeline: (transfer none): a #GstPipeline to run Validate on
+ * @runner: (transfer none): a #GstValidateRunner
+ * @parent: (nullable): The parent of the new monitor
+ *
+ * Returns: (transfer full): A #GstValidatePipelineMonitor
  */
 GstValidatePipelineMonitor *
 gst_validate_pipeline_monitor_new (GstPipeline * pipeline,
     GstValidateRunner * runner, GstValidateMonitor * parent)
 {
   GstBus *bus;
-  GstValidatePipelineMonitor *monitor =
+  GstValidatePipelineMonitor *monitor;
+
+  g_return_val_if_fail (GST_IS_PIPELINE (pipeline), NULL);
+  g_return_val_if_fail (runner != NULL, NULL);
+
+  monitor =
       g_object_new (GST_TYPE_VALIDATE_PIPELINE_MONITOR, "object",
       pipeline, "validate-runner", runner, "validate-parent", parent,
       "pipeline", pipeline, NULL);
-  GstObject *target =
-      gst_validate_monitor_get_target (GST_VALIDATE_MONITOR (monitor));
-
-  if (target == NULL) {
-    g_object_unref (monitor);
-    return NULL;
-  }
 
   gst_validate_pipeline_monitor_create_scenarios (GST_VALIDATE_BIN_MONITOR
       (monitor));
@@ -863,7 +863,6 @@ gst_validate_pipeline_monitor_new (GstPipeline * pipeline,
     monitor->is_playbin = TRUE;
   else if (g_strcmp0 (G_OBJECT_TYPE_NAME (pipeline), "GstPlayBin3") == 0)
     monitor->is_playbin3 = TRUE;
-  gst_object_unref (target);
 
   return monitor;
 }

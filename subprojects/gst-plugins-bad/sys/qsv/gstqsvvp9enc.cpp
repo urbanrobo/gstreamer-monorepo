@@ -17,6 +17,20 @@
  * Boston, MA 02110-1301, USA.
  */
 
+/**
+ * SECTION:element-qsvvp9enc
+ * @title: qsvvp9enc
+ *
+ * Intel Quick Sync VP9 encoder
+ *
+ * ## Example launch line
+ * ```
+ * gst-launch-1.0 videotestsrc ! qsvvp9enc ! vp9parse ! matroskamux ! filesink location=out.mkv
+ * ```
+ *
+ * Since: 1.22
+ */
+
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
@@ -30,21 +44,50 @@
 #ifdef G_OS_WIN32
 #include <gst/d3d11/gstd3d11.h>
 #else
-#include <gst/va/gstvadisplay_drm.h>
+#include <gst/va/gstva.h>
 #endif
 
-GST_DEBUG_CATEGORY_EXTERN (gst_qsv_vp9_enc_debug);
+GST_DEBUG_CATEGORY_STATIC (gst_qsv_vp9_enc_debug);
 #define GST_CAT_DEFAULT gst_qsv_vp9_enc_debug
 
+/**
+ * GstQsvVP9EncRateControl:
+ *
+ * Since: 1.22
+ */
 #define GST_TYPE_QSV_VP9_ENC_RATE_CONTROL (gst_qsv_vp9_enc_rate_control_get_type ())
 static GType
 gst_qsv_vp9_enc_rate_control_get_type (void)
 {
   static GType rate_control_type = 0;
   static const GEnumValue rate_controls[] = {
+    /**
+     * GstQsvVP9EncRateControl::cbr:
+     *
+     * Since: 1.22
+     */
     {MFX_RATECONTROL_CBR, "Constant Bitrate", "cbr"},
+
+    /**
+     * GstQsvVP9EncRateControl::vbr:
+     *
+     * Since: 1.22
+     */
     {MFX_RATECONTROL_VBR, "Variable Bitrate", "vbr"},
-    /* TODO: Add more rate control modes */
+
+    /**
+     * GstQsvVP9EncRateControl::cqp:
+     *
+     * Since: 1.22
+     */
+    {MFX_RATECONTROL_CQP, "Constant Quantizer", "cqp"},
+
+    /**
+     * GstQsvVP9EncRateControl::icq:
+     *
+     * Since: 1.22
+     */
+    {MFX_RATECONTROL_ICQ, "Intelligent CQP", "icq"},
     {0, nullptr, nullptr}
   };
 
@@ -60,20 +103,37 @@ gst_qsv_vp9_enc_rate_control_get_type (void)
 enum
 {
   PROP_0,
-  PROP_ADAPTER_LUID,
-  PROP_DEVICE_PATH,
+  PROP_QP_I,
+  PROP_QP_P,
   PROP_GOP_SIZE,
   PROP_REF_FRAMES,
   PROP_BITRATE,
   PROP_MAX_BITRATE,
   PROP_RATE_CONTROL,
+  PROP_ICQ_QUALITY,
 };
 
+#define DEFAULT_QP 0
 #define DEFAULT_GOP_SIZE 0
-#define DEFAULT_REF_FRAMES 2
+#define DEFAULT_REF_FRAMES 1
 #define DEFAULT_BITRATE 2000
 #define DEFAULT_MAX_BITRATE 0
-#define DEFAULT_RATE_CONTROL MFX_RATECONTROL_CBR
+#define DEFAULT_RATE_CONTROL MFX_RATECONTROL_VBR
+#define DEFAULT_IQC_QUALITY 0
+
+#define DOC_SINK_CAPS_COMM \
+    "format = (string) { NV12, P010_10LE, VUYA, Y410 }, " \
+    "width = (int) [16, 8192 ], " \
+    "height = (int) [16, 8192 ]"
+
+#define DOC_SINK_CAPS \
+    "video/x-raw(memory:D3D11Memory), " DOC_SINK_CAPS_COMM "; " \
+    "video/x-raw(memory:VAMemory), " DOC_SINK_CAPS_COMM "; " \
+    "video/x-raw, " DOC_SINK_CAPS_COMM
+
+#define DOC_SRC_CAPS \
+    "video/x-vp9, width = (int) [16, 8192 ], height = (int) [16, 8192 ], " \
+    "profile = (string) { 0, 2, 1, 3 }"
 
 typedef struct _GstQsvVP9EncClassData
 {
@@ -82,6 +142,7 @@ typedef struct _GstQsvVP9EncClassData
   guint impl_index;
   gint64 adapter_luid;
   gchar *display_path;
+  gchar *description;
 } GstQsvVP9EncClassData;
 
 typedef struct _GstQsvVP9Enc
@@ -98,11 +159,14 @@ typedef struct _GstQsvVP9Enc
   gboolean property_updated;
 
   /* properties */
+  guint qp_i;
+  guint qp_p;
   guint gop_size;
   guint ref_frames;
   guint bitrate;
   guint max_bitrate;
   mfxU16 rate_control;
+  guint icq_quality;
 } GstQsvVP9Enc;
 
 typedef struct _GstQsvVP9EncClass
@@ -131,8 +195,8 @@ static gboolean gst_qsv_vp9_enc_set_format (GstQsvEncoder * encoder,
 static gboolean gst_qsv_vp9_enc_set_output_state (GstQsvEncoder * encoder,
     GstVideoCodecState * state, mfxSession session);
 static GstQsvEncoderReconfigure
-gst_qsv_vp9_enc_check_reconfigure (GstQsvEncoder * encoder,
-    mfxVideoParam * param);
+gst_qsv_vp9_enc_check_reconfigure (GstQsvEncoder * encoder, mfxSession session,
+    mfxVideoParam * param, GPtrArray * extra_params);
 
 static void
 gst_qsv_vp9_enc_class_init (GstQsvVP9EncClass * klass, gpointer data)
@@ -142,32 +206,28 @@ gst_qsv_vp9_enc_class_init (GstQsvVP9EncClass * klass, gpointer data)
   GstVideoEncoderClass *encoder_class = GST_VIDEO_ENCODER_CLASS (klass);
   GstQsvEncoderClass *qsvenc_class = GST_QSV_ENCODER_CLASS (klass);
   GstQsvVP9EncClassData *cdata = (GstQsvVP9EncClassData *) data;
+  GstPadTemplate *pad_templ;
+  GstCaps *doc_caps;
 
   qsvenc_class->codec_id = MFX_CODEC_VP9;
   qsvenc_class->impl_index = cdata->impl_index;
   qsvenc_class->adapter_luid = cdata->adapter_luid;
-  if (cdata->display_path)
-    strcpy (qsvenc_class->display_path, cdata->display_path);
+  qsvenc_class->display_path = cdata->display_path;
 
   object_class->finalize = gst_qsv_vp9_enc_finalize;
   object_class->set_property = gst_qsv_vp9_enc_set_property;
   object_class->get_property = gst_qsv_vp9_enc_get_property;
 
-#ifdef G_OS_WIN32
-  g_object_class_install_property (object_class, PROP_ADAPTER_LUID,
-      g_param_spec_int64 ("adapter-luid", "Adapter LUID",
-          "DXGI Adapter LUID (Locally Unique Identifier) of created device",
-          G_MININT64, G_MAXINT64, qsvenc_class->adapter_luid,
-          (GParamFlags) (GST_PARAM_CONDITIONALLY_AVAILABLE | G_PARAM_READABLE |
-              G_PARAM_STATIC_STRINGS)));
-#else
-  g_object_class_install_property (object_class, PROP_DEVICE_PATH,
-      g_param_spec_string ("device-path", "Device Path",
-          "DRM device path", cdata->display_path,
-          (GParamFlags) (GST_PARAM_CONDITIONALLY_AVAILABLE |
-              G_PARAM_READABLE | G_PARAM_STATIC_STRINGS)));
-#endif
-
+  g_object_class_install_property (object_class, PROP_QP_I,
+      g_param_spec_uint ("qp-i", "QP I",
+          "Constant quantizer for I frames (0: default)",
+          0, 255, DEFAULT_QP, (GParamFlags)
+          (G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+  g_object_class_install_property (object_class, PROP_QP_P,
+      g_param_spec_uint ("qp-p", "QP P",
+          "Constant quantizer for P frames (0: default)",
+          0, 255, DEFAULT_QP, (GParamFlags)
+          (G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
   g_object_class_install_property (object_class, PROP_GOP_SIZE,
       g_param_spec_uint ("gop-size", "GOP Size",
           "Number of pictures within a GOP (0: unspecified)",
@@ -176,39 +236,62 @@ gst_qsv_vp9_enc_class_init (GstQsvVP9EncClass * klass, gpointer data)
   g_object_class_install_property (object_class, PROP_REF_FRAMES,
       g_param_spec_uint ("ref-frames", "Reference Frames",
           "Number of reference frames (0: unspecified)",
-          0, 16, DEFAULT_REF_FRAMES, (GParamFlags)
+          0, 3, DEFAULT_REF_FRAMES, (GParamFlags)
           (G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
   g_object_class_install_property (object_class, PROP_BITRATE,
       g_param_spec_uint ("bitrate", "Bitrate",
           "Target bitrate in kbit/sec, Ignored when selected rate-control mode "
-          "is constant QP variants (i.e., \"cqp\", \"icq\", and \"la_icq\")",
-          0, G_MAXINT, DEFAULT_BITRATE, (GParamFlags)
+          "is constant QP variants (i.e., \"cqp\" and \"icq\")",
+          0, G_MAXUINT16, DEFAULT_BITRATE, (GParamFlags)
           (G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
   g_object_class_install_property (object_class, PROP_MAX_BITRATE,
       g_param_spec_uint ("max-bitrate", "Max Bitrate",
           "Maximum bitrate in kbit/sec, Ignored when selected rate-control mode "
-          "is constant QP variants (i.e., \"cqp\", \"icq\", and \"la_icq\")",
-          0, G_MAXINT, DEFAULT_MAX_BITRATE, (GParamFlags)
+          "is constant QP variants (i.e., \"cqp\" and \"icq\")",
+          0, G_MAXUINT16, DEFAULT_MAX_BITRATE, (GParamFlags)
           (G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
   g_object_class_install_property (object_class, PROP_RATE_CONTROL,
       g_param_spec_enum ("rate-control", "Rate Control",
           "Rate Control Method", GST_TYPE_QSV_VP9_ENC_RATE_CONTROL,
           DEFAULT_RATE_CONTROL,
           (GParamFlags) (G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+  g_object_class_install_property (object_class, PROP_ICQ_QUALITY,
+      g_param_spec_uint ("icq-quality", "ICQ Quality",
+          "Intelligent Constant Quality for \"icq\" rate-control (0: default)",
+          0, 255, DEFAULT_IQC_QUALITY, (GParamFlags)
+          (G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
 
   parent_class = (GstElementClass *) g_type_class_peek_parent (klass);
+
+#ifdef G_OS_WIN32
+  std::string long_name = "Intel Quick Sync Video " +
+      std::string (cdata->description) + " VP9 Encoder";
+
+  gst_element_class_set_metadata (element_class, long_name.c_str (),
+      "Codec/Encoder/Video/Hardware",
+      "Intel Quick Sync Video VP9 Encoder",
+      "Seungha Yang <seungha@centricular.com>");
+#else
   gst_element_class_set_static_metadata (element_class,
       "Intel Quick Sync Video VP9 Encoder",
       "Codec/Encoder/Video/Hardware",
       "Intel Quick Sync Video VP9 Encoder",
       "Seungha Yang <seungha@centricular.com>");
+#endif
 
-  gst_element_class_add_pad_template (element_class,
-      gst_pad_template_new ("sink", GST_PAD_SINK, GST_PAD_ALWAYS,
-          cdata->sink_caps));
-  gst_element_class_add_pad_template (element_class,
-      gst_pad_template_new ("src", GST_PAD_SRC, GST_PAD_ALWAYS,
-          cdata->src_caps));
+  pad_templ = gst_pad_template_new ("sink",
+      GST_PAD_SINK, GST_PAD_ALWAYS, cdata->sink_caps);
+  doc_caps = gst_caps_from_string (DOC_SINK_CAPS);
+  gst_pad_template_set_documentation_caps (pad_templ, doc_caps);
+  gst_caps_unref (doc_caps);
+  gst_element_class_add_pad_template (element_class, pad_templ);
+
+  pad_templ = gst_pad_template_new ("src",
+      GST_PAD_SRC, GST_PAD_ALWAYS, cdata->src_caps);
+  doc_caps = gst_caps_from_string (DOC_SRC_CAPS);
+  gst_pad_template_set_documentation_caps (pad_templ, doc_caps);
+  gst_caps_unref (doc_caps);
+  gst_element_class_add_pad_template (element_class, pad_templ);
 
   encoder_class->getcaps = GST_DEBUG_FUNCPTR (gst_qsv_vp9_enc_getcaps);
 
@@ -218,20 +301,26 @@ gst_qsv_vp9_enc_class_init (GstQsvVP9EncClass * klass, gpointer data)
   qsvenc_class->check_reconfigure =
       GST_DEBUG_FUNCPTR (gst_qsv_vp9_enc_check_reconfigure);
 
+  gst_type_mark_as_plugin_api (GST_TYPE_QSV_VP9_ENC_RATE_CONTROL,
+      (GstPluginAPIFlags) 0);
+
   gst_caps_unref (cdata->sink_caps);
   gst_caps_unref (cdata->src_caps);
-  g_free (cdata->display_path);
+  g_free (cdata->description);
   g_free (cdata);
 }
 
 static void
 gst_qsv_vp9_enc_init (GstQsvVP9Enc * self)
 {
+  self->qp_i = DEFAULT_QP;
+  self->qp_p = DEFAULT_QP;
   self->gop_size = DEFAULT_GOP_SIZE;
   self->ref_frames = DEFAULT_REF_FRAMES;
   self->bitrate = DEFAULT_BITRATE;
   self->max_bitrate = DEFAULT_MAX_BITRATE;
   self->rate_control = DEFAULT_RATE_CONTROL;
+  self->icq_quality = DEFAULT_IQC_QUALITY;
 
   g_mutex_init (&self->prop_lock);
 }
@@ -282,6 +371,14 @@ gst_qsv_vp9_enc_set_property (GObject * object, guint prop_id,
   GstQsvVP9Enc *self = GST_QSV_VP9_ENC (object);
 
   switch (prop_id) {
+    case PROP_QP_I:
+      gst_qsv_vp9_enc_check_update_uint (self, &self->qp_i,
+          g_value_get_uint (value), TRUE);
+      break;
+    case PROP_QP_P:
+      gst_qsv_vp9_enc_check_update_uint (self, &self->qp_p,
+          g_value_get_uint (value), TRUE);
+      break;
     case PROP_GOP_SIZE:
       gst_qsv_vp9_enc_check_update_uint (self, &self->gop_size,
           g_value_get_uint (value), FALSE);
@@ -302,6 +399,10 @@ gst_qsv_vp9_enc_set_property (GObject * object, guint prop_id,
       gst_qsv_vp9_enc_check_update_enum (self, &self->rate_control,
           g_value_get_enum (value));
       break;
+    case PROP_ICQ_QUALITY:
+      gst_qsv_vp9_enc_check_update_uint (self, &self->icq_quality,
+          g_value_get_uint (value), FALSE);
+      break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
@@ -313,14 +414,13 @@ gst_qsv_vp9_enc_get_property (GObject * object, guint prop_id, GValue * value,
     GParamSpec * pspec)
 {
   GstQsvVP9Enc *self = GST_QSV_VP9_ENC (object);
-  GstQsvEncoderClass *klass = GST_QSV_ENCODER_GET_CLASS (self);
 
   switch (prop_id) {
-    case PROP_ADAPTER_LUID:
-      g_value_set_int64 (value, klass->adapter_luid);
+    case PROP_QP_I:
+      g_value_set_uint (value, self->qp_i);
       break;
-    case PROP_DEVICE_PATH:
-      g_value_set_string (value, klass->display_path);
+    case PROP_QP_P:
+      g_value_set_uint (value, self->qp_p);
       break;
     case PROP_GOP_SIZE:
       g_value_set_uint (value, self->gop_size);
@@ -336,6 +436,9 @@ gst_qsv_vp9_enc_get_property (GObject * object, guint prop_id, GValue * value,
       break;
     case PROP_RATE_CONTROL:
       g_value_set_enum (value, self->rate_control);
+      break;
+    case PROP_ICQ_QUALITY:
+      g_value_set_uint (value, self->icq_quality);
       break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -393,7 +496,6 @@ gst_qsv_vp9_enc_getcaps (GstVideoEncoder * encoder, GstCaps * filter)
       }
     }
   }
-  gst_clear_caps (&allowed_caps);
 
   GST_DEBUG_OBJECT (self, "Downstream specified %" G_GSIZE_FORMAT " profiles",
       downstream_profiles.size ());
@@ -404,8 +506,12 @@ gst_qsv_vp9_enc_getcaps (GstVideoEncoder * encoder, GstCaps * filter)
     GST_WARNING_OBJECT (self,
         "Allowed caps holds no profile field %" GST_PTR_FORMAT, allowed_caps);
 
+    gst_clear_caps (&allowed_caps);
+
     return gst_video_encoder_proxy_getcaps (encoder, nullptr, filter);
   }
+
+  gst_clear_caps (&allowed_caps);
 
   template_caps = gst_pad_get_pad_template_caps (encoder->sinkpad);
   template_caps = gst_caps_make_writable (template_caps);
@@ -506,6 +612,33 @@ gst_qsv_vp9_enc_init_vp9_param (mfxExtVP9Param * param)
   param->Header.BufferSz = sizeof (mfxExtVP9Param);
 }
 
+static void
+gst_qsv_vp9_enc_set_bitrate (GstQsvVP9Enc * self, mfxVideoParam * param)
+{
+  switch (param->mfx.RateControlMethod) {
+    case MFX_RATECONTROL_CBR:
+      param->mfx.TargetKbps = param->mfx.MaxKbps = self->bitrate;
+      param->mfx.BRCParamMultiplier = 1;
+      break;
+    case MFX_RATECONTROL_VBR:
+      param->mfx.TargetKbps = self->bitrate;
+      param->mfx.MaxKbps = self->max_bitrate;
+      param->mfx.BRCParamMultiplier = 1;
+      break;
+    case MFX_RATECONTROL_CQP:
+      param->mfx.QPI = self->qp_i;
+      param->mfx.QPP = self->qp_p;
+      break;
+    case MFX_RATECONTROL_ICQ:
+      param->mfx.ICQQuality = self->icq_quality;
+      break;
+    default:
+      GST_WARNING_OBJECT (self,
+          "Unhandled rate-control method %d", self->rate_control);
+      break;
+  }
+}
+
 static gboolean
 gst_qsv_vp9_enc_set_format (GstQsvEncoder * encoder,
     GstVideoCodecState * state, mfxVideoParam * param, GPtrArray * extra_params)
@@ -593,22 +726,7 @@ gst_qsv_vp9_enc_set_format (GstQsvEncoder * encoder,
   param->mfx.RateControlMethod = self->rate_control;
   param->mfx.NumRefFrame = self->ref_frames;
 
-  /* Calculate multiplier to avoid uint16 overflow */
-  guint max_val = MAX (self->bitrate, self->max_bitrate);
-  guint multiplier = (max_val + 0x10000) / 0x10000;
-
-  switch (param->mfx.RateControlMethod) {
-    case MFX_RATECONTROL_CBR:
-    case MFX_RATECONTROL_VBR:
-      param->mfx.TargetKbps = self->bitrate / multiplier;
-      param->mfx.MaxKbps = self->max_bitrate / multiplier;
-      param->mfx.BRCParamMultiplier = (mfxU16) multiplier;
-      break;
-    default:
-      GST_WARNING_OBJECT (self,
-          "Unhandled rate-control method %d", self->rate_control);
-      break;
-  }
+  gst_qsv_vp9_enc_set_bitrate (self, param);
 
   g_ptr_array_add (extra_params, vp9_param);
 
@@ -632,7 +750,6 @@ gst_qsv_vp9_enc_set_output_state (GstQsvEncoder * encoder,
   GstTagList *tags;
   GstVideoCodecState *out_state;
   guint bitrate, max_bitrate;
-  guint multiplier = 1;
   mfxVideoParam param;
   const gchar *profile_str;
   mfxStatus status;
@@ -661,19 +778,24 @@ gst_qsv_vp9_enc_set_output_state (GstQsvEncoder * encoder,
   gst_tag_list_add (tags, GST_TAG_MERGE_REPLACE, GST_TAG_ENCODER, "qsvvp9enc",
       nullptr);
 
-  if (param.mfx.BRCParamMultiplier > 0)
-    multiplier = param.mfx.BRCParamMultiplier;
+  switch (param.mfx.RateControlMethod) {
+    case MFX_RATECONTROL_CQP:
+    case MFX_RATECONTROL_ICQ:
+      /* We don't know target/max bitrate in this case */
+      break;
+    default:
+      max_bitrate = (guint) param.mfx.MaxKbps;
+      bitrate = (guint) param.mfx.TargetKbps;
+      if (bitrate > 0) {
+        gst_tag_list_add (tags, GST_TAG_MERGE_REPLACE,
+            GST_TAG_NOMINAL_BITRATE, bitrate * 1000, nullptr);
+      }
 
-  max_bitrate = (guint) param.mfx.MaxKbps * multiplier;
-  bitrate = (guint) param.mfx.TargetKbps * multiplier;
-  if (bitrate > 0) {
-    gst_tag_list_add (tags, GST_TAG_MERGE_REPLACE,
-        GST_TAG_NOMINAL_BITRATE, bitrate * 1000, nullptr);
-  }
-
-  if (max_bitrate > 0) {
-    gst_tag_list_add (tags, GST_TAG_MERGE_REPLACE,
-        GST_TAG_MAXIMUM_BITRATE, max_bitrate * 1000, nullptr);
+      if (max_bitrate > 0) {
+        gst_tag_list_add (tags, GST_TAG_MERGE_REPLACE,
+            GST_TAG_MAXIMUM_BITRATE, max_bitrate * 1000, nullptr);
+      }
+      break;
   }
 
   gst_video_encoder_merge_tags (GST_VIDEO_ENCODER (encoder),
@@ -684,38 +806,34 @@ gst_qsv_vp9_enc_set_output_state (GstQsvEncoder * encoder,
 }
 
 static GstQsvEncoderReconfigure
-gst_qsv_vp9_enc_check_reconfigure (GstQsvEncoder * encoder,
-    mfxVideoParam * param)
+gst_qsv_vp9_enc_check_reconfigure (GstQsvEncoder * encoder, mfxSession session,
+    mfxVideoParam * param, GPtrArray * extra_params)
 {
   GstQsvVP9Enc *self = GST_QSV_VP9_ENC (encoder);
+  GstQsvEncoderReconfigure ret = GST_QSV_ENCODER_RECONFIGURE_NONE;
 
   g_mutex_lock (&self->prop_lock);
-
   if (self->property_updated) {
-    g_mutex_unlock (&self->prop_lock);
-    return GST_QSV_ENCODER_RECONFIGURE_FULL;
+    ret = GST_QSV_ENCODER_RECONFIGURE_FULL;
+    goto done;
   }
 
   if (self->bitrate_updated) {
-    /* Update @param with updated bitrate values so that baseclass can
-     * call MFXVideoENCODE_Query() with updated values */
-    param->mfx.TargetKbps = self->bitrate;
-    param->mfx.MaxKbps = self->max_bitrate;
-    g_mutex_unlock (&self->prop_lock);
+    /* VP9 does not support query with MFX_EXTBUFF_ENCODER_RESET_OPTION
+     * Just return GST_QSV_ENCODER_RECONFIGURE_BITRATE here.
+     * Baseclass will care error */
+    gst_qsv_vp9_enc_set_bitrate (self, param);
 
-    return GST_QSV_ENCODER_RECONFIGURE_BITRATE;
+    ret = GST_QSV_ENCODER_RECONFIGURE_BITRATE;
   }
 
+done:
+  self->property_updated = FALSE;
+  self->bitrate_updated = FALSE;
   g_mutex_unlock (&self->prop_lock);
 
-  return GST_QSV_ENCODER_RECONFIGURE_NONE;
+  return ret;
 }
-
-typedef struct
-{
-  guint width;
-  guint height;
-} Resolution;
 
 void
 gst_qsv_vp9_enc_register (GstPlugin * plugin, guint rank, guint impl_index,
@@ -723,18 +841,16 @@ gst_qsv_vp9_enc_register (GstPlugin * plugin, guint rank, guint impl_index,
 {
   mfxVideoParam param;
   mfxInfoMFX *mfx;
-  static const Resolution resolutions_to_check[] = {
-    {1280, 720}, {1920, 1088}, {2560, 1440}, {3840, 2160}, {4096, 2160},
-    {7680, 4320}, {8192, 4320}
-  };
   std::vector < mfxU16 > supported_profiles;
   std::vector < std::string > supported_formats;
-  Resolution max_resolution;
+  GstQsvResolution max_resolution;
   mfxExtVP9Param vp9_param;
   mfxExtBuffer *ext_bufs[1];
 
+  GST_DEBUG_CATEGORY_INIT (gst_qsv_vp9_enc_debug, "qsvvp9enc", 0, "qsvvp9enc");
+
   memset (&param, 0, sizeof (mfxVideoParam));
-  memset (&max_resolution, 0, sizeof (Resolution));
+  memset (&max_resolution, 0, sizeof (GstQsvResolution));
 
   ext_bufs[0] = (mfxExtBuffer *) & vp9_param;
 
@@ -819,24 +935,24 @@ gst_qsv_vp9_enc_register (GstPlugin * plugin, guint rank, guint impl_index,
   mfx->FrameInfo.Shift = 0;
 
   /* Check max-resolution */
-  for (guint i = 0; i < G_N_ELEMENTS (resolutions_to_check); i++) {
+  for (guint i = 0; i < G_N_ELEMENTS (gst_qsv_resolutions); i++) {
     mfx->FrameInfo.Width = mfx->FrameInfo.CropW =
-        GST_ROUND_UP_16 (resolutions_to_check[i].width);
+        GST_ROUND_UP_16 (gst_qsv_resolutions[i].width);
     mfx->FrameInfo.Height = mfx->FrameInfo.CropH =
-        GST_ROUND_UP_16 (resolutions_to_check[i].height);
+        GST_ROUND_UP_16 (gst_qsv_resolutions[i].height);
 
     gst_qsv_vp9_enc_init_vp9_param (&vp9_param);
 
-    vp9_param.FrameWidth = resolutions_to_check[i].width;
-    vp9_param.FrameHeight = resolutions_to_check[i].height;
+    vp9_param.FrameWidth = gst_qsv_resolutions[i].width;
+    vp9_param.FrameHeight = gst_qsv_resolutions[i].height;
 
     vp9_param.WriteIVFHeaders = MFX_CODINGOPTION_OFF;
 
     if (MFXVideoENCODE_Query (session, &param, &param) != MFX_ERR_NONE)
       break;
 
-    max_resolution.width = resolutions_to_check[i].width;
-    max_resolution.height = resolutions_to_check[i].height;
+    max_resolution.width = gst_qsv_resolutions[i].width;
+    max_resolution.height = gst_qsv_resolutions[i].height;
   }
 
   GST_INFO ("Maximum supported resolution: %dx%d",
@@ -881,6 +997,13 @@ gst_qsv_vp9_enc_register (GstPlugin * plugin, guint rank, guint impl_index,
   gst_caps_set_features_simple (d3d11_caps, caps_features);
   gst_caps_append (d3d11_caps, sink_caps);
   sink_caps = d3d11_caps;
+#else
+  GstCaps *va_caps = gst_caps_copy (sink_caps);
+  GstCapsFeatures *caps_features =
+      gst_caps_features_new (GST_CAPS_FEATURE_MEMORY_VA, nullptr);
+  gst_caps_set_features_simple (va_caps, caps_features);
+  gst_caps_append (va_caps, sink_caps);
+  sink_caps = va_caps;
 #endif
 
   std::string src_caps_str = "video/x-vp9";
@@ -917,13 +1040,10 @@ gst_qsv_vp9_enc_register (GstPlugin * plugin, guint rank, guint impl_index,
   cdata->impl_index = impl_index;
 
 #ifdef G_OS_WIN32
-  gint64 device_luid;
-  g_object_get (device, "adapter-luid", &device_luid, nullptr);
-  cdata->adapter_luid = device_luid;
+  g_object_get (device, "adapter-luid", &cdata->adapter_luid,
+      "description", &cdata->description, nullptr);
 #else
-  gchar *display_path;
-  g_object_get (device, "path", &display_path, nullptr);
-  cdata->display_path = display_path;
+  g_object_get (device, "path", &cdata->display_path, nullptr);
 #endif
 
   GType type;
@@ -958,6 +1078,9 @@ gst_qsv_vp9_enc_register (GstPlugin * plugin, guint rank, guint impl_index,
 
   if (rank > 0 && index != 0)
     rank--;
+
+  if (index != 0)
+    gst_element_type_set_skip_documentation (type);
 
   if (!gst_element_register (plugin, feature_name, rank, type))
     GST_WARNING ("Failed to register plugin '%s'", type_name);

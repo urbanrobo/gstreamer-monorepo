@@ -1,11 +1,13 @@
-executable('gst-plugin-scanner',
+exe = executable('gst-plugin-scanner',
   'gst-plugin-scanner.c',
   c_args : gst_c_args,
   include_directories : [configinc],
-  dependencies : [gobject_dep, gmodule_dep, glib_dep, mathlib, gst_dep],
+  dependencies : [gst_dep, mathlib, gmodule_dep,],
   install_dir : helpers_install_dir,
   install: true,
 )
+
+meson.add_devenv({'GST_PLUGIN_SCANNER': exe.full_path()})
 
 # Used in test env setup to make tests find plugin scanner in build tree
 gst_scanner_dir = meson.current_build_dir()
@@ -15,8 +17,9 @@ if bashcomp_found
     'gst-completion-helper.c',
     c_args : gst_c_args,
     include_directories : [configinc],
-    dependencies : [gobject_dep, glib_dep, gst_dep],
+    dependencies : [gst_dep],
     install_dir : helpers_install_dir,
+    install_tag : 'bin',
     install: true,
   )
 endif
@@ -109,20 +112,27 @@ if have_ptp
     error('Unexpected ptp helper permissions value: ' + with_ptp_helper_permissions)
   endif
 
-  executable('gst-ptp-helper', 'gst-ptp-helper.c',
+  exe = executable('gst-ptp-helper', 'gst-ptp-helper.c',
     c_args : gst_c_args,
     include_directories : [configinc, libsinc],
-    dependencies : [gio_dep, gobject_dep, glib_dep, mathlib, gst_dep, cap_dep],
+    dependencies : [gst_dep, gio_dep, mathlib, cap_dep],
     install_dir : helpers_install_dir,
     install : true)
 
   meson.add_install_script('ptp_helper_post_install.sh',
       helpers_install_dir, with_ptp_helper_permissions,
       setcap_prog.found() ? setcap_prog.full_path() : '')
+  meson.add_devenv({'GST_PTP_HELPER': exe.full_path()})
 endif
 
 install_data(['gst_gdb.py', 'glib_gobject_helper.py'],
-  install_dir : join_paths(get_option('datadir'), 'gstreamer-@0@'.format(apiversion), 'gdb'))
+  install_dir : join_paths(get_option('datadir'), 'gstreamer-@0@'.format(apiversion), 'gdb'),
+  install_tag : 'devel')
+
+# This is needed to make gdb find gst_gdb.py
+env = environment()
+env.prepend('PYTHONPATH', meson.current_source_dir())
+meson.add_devenv(env)
 
 gdbconf = configuration_data()
 gdbconf.set('GST_API_VERSION', apiversion)
@@ -140,4 +150,5 @@ endif
 configure_file(input : 'libgstreamer-gdb.py.in',
   output : 'libgstreamer-@0@.so.@1@-gdb.py'.format(apiversion, libversion),
   install_dir : gdb_install_dir,
+  install_tag : 'devel',
   configuration : gdbconf)

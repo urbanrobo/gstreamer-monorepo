@@ -705,6 +705,7 @@ appsrc_pad_probe (GstPad * pad, GstPadProbeInfo * info, gpointer user_data)
     fail_unless_equals_uint64 (GST_BUFFER_DURATION (recvbuf),
         GST_BUFFER_DURATION (exp_buf));
 
+    gst_buffer_unref (exp_buf);
     g_list_free1 (*expected);
     *expected = next;
   }
@@ -817,7 +818,7 @@ GST_START_TEST (test_appsrc_period_with_custom_segment)
       sample = gst_sample_new (buffer, NULL, &segment, NULL);
 
       expected = g_list_append (expected, gst_event_new_segment (&segment));
-      expected = g_list_append (expected, buffer);
+      expected = g_list_append (expected, gst_buffer_ref (buffer));
 
       /* 1st sample includes buffer and segment */
       fail_unless (gst_app_src_push_sample (GST_APP_SRC (src), sample)
@@ -832,7 +833,7 @@ GST_START_TEST (test_appsrc_period_with_custom_segment)
         buffer = gst_buffer_new_and_alloc (4);
         GST_BUFFER_DTS (buffer) = GST_BUFFER_PTS (buffer) = j * GST_SECOND;
         GST_BUFFER_DURATION (buffer) = GST_SECOND;
-        expected = g_list_append (expected, buffer);
+        expected = g_list_append (expected, gst_buffer_ref (buffer));
         fail_unless (gst_app_src_push_buffer (GST_APP_SRC (src), buffer)
             == GST_FLOW_OK);
       }
@@ -869,7 +870,7 @@ GST_START_TEST (test_appsrc_period_with_custom_segment)
       sample = gst_sample_new (buffer, NULL, &segment, NULL);
 
       expected = g_list_append (expected, gst_event_new_segment (&segment));
-      expected = g_list_append (expected, buffer);
+      expected = g_list_append (expected, gst_buffer_ref (buffer));
 
       /* 1st sample includes buffer and segment */
       fail_unless (gst_app_src_push_sample (GST_APP_SRC (src), sample)
@@ -884,7 +885,7 @@ GST_START_TEST (test_appsrc_period_with_custom_segment)
         buffer = gst_buffer_new_and_alloc (4);
         GST_BUFFER_DTS (buffer) = GST_BUFFER_PTS (buffer) = j * GST_SECOND;
         GST_BUFFER_DURATION (buffer) = GST_SECOND;
-        expected = g_list_append (expected, buffer);
+        expected = g_list_append (expected, gst_buffer_ref (buffer));
         fail_unless (gst_app_src_push_buffer (GST_APP_SRC (src), buffer)
             == GST_FLOW_OK);
       }
@@ -999,7 +1000,7 @@ GST_START_TEST (test_appsrc_custom_segment_twice)
       } else {
         sample = gst_sample_new (buffer, NULL, &segment, NULL);
         expected = g_list_append (expected, gst_event_new_segment (&segment));
-        expected = g_list_append (expected, buffer);
+        expected = g_list_append (expected, gst_buffer_ref (buffer));
       }
       /* PUSH THE FIRST SAMPLE */
       fail_unless (gst_app_src_push_sample (GST_APP_SRC (src), sample)
@@ -1024,11 +1025,11 @@ GST_START_TEST (test_appsrc_custom_segment_twice)
       if (tc == 0 || tc == 1) {
         /* Test Case 0 or 1: Push a sample with duplicated segment */
         sample = gst_sample_new (buffer, NULL, &segment, NULL);
-        expected = g_list_append (expected, buffer);
+        expected = g_list_append (expected, gst_buffer_ref (buffer));
       } else {
         sample = gst_sample_new (buffer, NULL, &segment, NULL);
         expected = g_list_append (expected, gst_event_new_segment (&segment));
-        expected = g_list_append (expected, buffer);
+        expected = g_list_append (expected, gst_buffer_ref (buffer));
       }
 
       fail_unless (gst_app_src_push_sample (GST_APP_SRC (src), sample)
@@ -1074,6 +1075,7 @@ GST_START_TEST (test_appsrc_limits)
   GstBuffer *buffer;
   gulong probe_id;
   guint64 current_level;
+  GstFlowReturn ret;
 
   /* Test if the bytes limit works correctly with both leaky types */
   h = gst_harness_new ("appsrc");
@@ -1095,7 +1097,8 @@ GST_START_TEST (test_appsrc_limits)
 
   buffer = gst_buffer_new_and_alloc (100);
   GST_BUFFER_PTS (buffer) = 0 * GST_SECOND;
-  gst_app_src_push_buffer (GST_APP_SRC (h->element), buffer);
+  ret = gst_app_src_push_buffer (GST_APP_SRC (h->element), buffer);
+  fail_unless_equals_int (ret, GST_FLOW_OK);
 
   /* wait until the appsrc is blocked downstream */
   while (!gst_pad_is_blocking (srcpad))
@@ -1103,10 +1106,12 @@ GST_START_TEST (test_appsrc_limits)
 
   buffer = gst_buffer_new_and_alloc (100);
   GST_BUFFER_PTS (buffer) = 1 * GST_SECOND;
-  gst_app_src_push_buffer (GST_APP_SRC (h->element), buffer);
+  ret = gst_app_src_push_buffer (GST_APP_SRC (h->element), buffer);
+  fail_unless_equals_int (ret, GST_FLOW_OK);
   buffer = gst_buffer_new_and_alloc (100);
   GST_BUFFER_PTS (buffer) = 2 * GST_SECOND;
-  gst_app_src_push_buffer (GST_APP_SRC (h->element), buffer);
+  ret = gst_app_src_push_buffer (GST_APP_SRC (h->element), buffer);
+  fail_unless_equals_int (ret, GST_FLOW_OK);
 
   /* The first buffer is not queued anymore but inside the pad probe */
   g_object_get (h->element, "current-level-bytes", &current_level, NULL);
@@ -1118,7 +1123,8 @@ GST_START_TEST (test_appsrc_limits)
 
   buffer = gst_buffer_new_and_alloc (100);
   GST_BUFFER_PTS (buffer) = 4 * GST_SECOND;
-  gst_app_src_push_buffer (GST_APP_SRC (h->element), buffer);
+  ret = gst_app_src_push_buffer (GST_APP_SRC (h->element), buffer);
+  fail_unless_equals_int (ret, GST_FLOW_OK);
 
   /* The new buffer was dropped now, otherwise we would have 2 seconds queued */
   g_object_get (h->element, "current-level-bytes", &current_level, NULL);
@@ -1132,7 +1138,8 @@ GST_START_TEST (test_appsrc_limits)
 
   buffer = gst_buffer_new_and_alloc (100);
   GST_BUFFER_PTS (buffer) = 4 * GST_SECOND;
-  gst_app_src_push_buffer (GST_APP_SRC (h->element), buffer);
+  ret = gst_app_src_push_buffer (GST_APP_SRC (h->element), buffer);
+  fail_unless_equals_int (ret, GST_FLOW_OK);
 
   /* The oldest buffer was dropped now, otherwise we would have only 1 second queued */
   g_object_get (h->element, "current-level-bytes", &current_level, NULL);
@@ -1190,7 +1197,8 @@ GST_START_TEST (test_appsrc_limits)
 
   buffer = gst_buffer_new_and_alloc (100);
   GST_BUFFER_PTS (buffer) = 0 * GST_SECOND;
-  gst_app_src_push_buffer (GST_APP_SRC (h->element), buffer);
+  ret = gst_app_src_push_buffer (GST_APP_SRC (h->element), buffer);
+  fail_unless_equals_int (ret, GST_FLOW_OK);
 
   /* wait until the appsrc is blocked downstream */
   while (!gst_pad_is_blocking (srcpad))
@@ -1198,10 +1206,12 @@ GST_START_TEST (test_appsrc_limits)
 
   buffer = gst_buffer_new_and_alloc (100);
   GST_BUFFER_PTS (buffer) = 1 * GST_SECOND;
-  gst_app_src_push_buffer (GST_APP_SRC (h->element), buffer);
+  ret = gst_app_src_push_buffer (GST_APP_SRC (h->element), buffer);
+  fail_unless_equals_int (ret, GST_FLOW_OK);
   buffer = gst_buffer_new_and_alloc (100);
   GST_BUFFER_PTS (buffer) = 2 * GST_SECOND;
-  gst_app_src_push_buffer (GST_APP_SRC (h->element), buffer);
+  ret = gst_app_src_push_buffer (GST_APP_SRC (h->element), buffer);
+  fail_unless_equals_int (ret, GST_FLOW_OK);
 
   /* The first buffer is not queued anymore but inside the pad probe */
   g_object_get (h->element, "current-level-bytes", &current_level, NULL);
@@ -1213,7 +1223,8 @@ GST_START_TEST (test_appsrc_limits)
 
   buffer = gst_buffer_new_and_alloc (100);
   GST_BUFFER_PTS (buffer) = 4 * GST_SECOND;
-  gst_app_src_push_buffer (GST_APP_SRC (h->element), buffer);
+  ret = gst_app_src_push_buffer (GST_APP_SRC (h->element), buffer);
+  fail_unless_equals_int (ret, GST_FLOW_OK);
 
   /* The new buffer was dropped now, otherwise we would have 2 seconds queued */
   g_object_get (h->element, "current-level-bytes", &current_level, NULL);
@@ -1227,7 +1238,8 @@ GST_START_TEST (test_appsrc_limits)
 
   buffer = gst_buffer_new_and_alloc (100);
   GST_BUFFER_PTS (buffer) = 4 * GST_SECOND;
-  gst_app_src_push_buffer (GST_APP_SRC (h->element), buffer);
+  ret = gst_app_src_push_buffer (GST_APP_SRC (h->element), buffer);
+  fail_unless_equals_int (ret, GST_FLOW_OK);
 
   /* The oldest buffer was dropped now, otherwise we would have only 1 second queued */
   g_object_get (h->element, "current-level-bytes", &current_level, NULL);
@@ -1286,7 +1298,8 @@ GST_START_TEST (test_appsrc_limits)
   buffer = gst_buffer_new_and_alloc (100);
   GST_BUFFER_PTS (buffer) = 0 * GST_SECOND;
   GST_BUFFER_DURATION (buffer) = GST_SECOND;
-  gst_app_src_push_buffer (GST_APP_SRC (h->element), buffer);
+  ret = gst_app_src_push_buffer (GST_APP_SRC (h->element), buffer);
+  fail_unless_equals_int (ret, GST_FLOW_OK);
 
   /* wait until the appsrc is blocked downstream */
   while (!gst_pad_is_blocking (srcpad))
@@ -1295,11 +1308,13 @@ GST_START_TEST (test_appsrc_limits)
   buffer = gst_buffer_new_and_alloc (100);
   GST_BUFFER_PTS (buffer) = 1 * GST_SECOND;
   GST_BUFFER_DURATION (buffer) = GST_SECOND;
-  gst_app_src_push_buffer (GST_APP_SRC (h->element), buffer);
+  ret = gst_app_src_push_buffer (GST_APP_SRC (h->element), buffer);
+  fail_unless_equals_int (ret, GST_FLOW_OK);
   buffer = gst_buffer_new_and_alloc (100);
   GST_BUFFER_PTS (buffer) = 2 * GST_SECOND;
   GST_BUFFER_DURATION (buffer) = GST_SECOND;
-  gst_app_src_push_buffer (GST_APP_SRC (h->element), buffer);
+  ret = gst_app_src_push_buffer (GST_APP_SRC (h->element), buffer);
+  fail_unless_equals_int (ret, GST_FLOW_OK);
 
   /* The first buffer is not queued anymore but inside the pad probe */
   g_object_get (h->element, "current-level-bytes", &current_level, NULL);
@@ -1312,7 +1327,8 @@ GST_START_TEST (test_appsrc_limits)
   buffer = gst_buffer_new_and_alloc (100);
   GST_BUFFER_PTS (buffer) = 4 * GST_SECOND;
   GST_BUFFER_DURATION (buffer) = GST_SECOND;
-  gst_app_src_push_buffer (GST_APP_SRC (h->element), buffer);
+  ret = gst_app_src_push_buffer (GST_APP_SRC (h->element), buffer);
+  fail_unless_equals_int (ret, GST_FLOW_OK);
 
   /* The new buffer was dropped now, otherwise we would have more than 2 seconds queued */
   g_object_get (h->element, "current-level-bytes", &current_level, NULL);
@@ -1327,7 +1343,8 @@ GST_START_TEST (test_appsrc_limits)
   buffer = gst_buffer_new_and_alloc (100);
   GST_BUFFER_PTS (buffer) = 4 * GST_SECOND;
   GST_BUFFER_DURATION (buffer) = GST_SECOND;
-  gst_app_src_push_buffer (GST_APP_SRC (h->element), buffer);
+  ret = gst_app_src_push_buffer (GST_APP_SRC (h->element), buffer);
+  fail_unless_equals_int (ret, GST_FLOW_OK);
 
   /* The oldest buffer was dropped now, otherwise we would have only 1 second queued */
   g_object_get (h->element, "current-level-bytes", &current_level, NULL);

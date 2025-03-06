@@ -26,9 +26,9 @@
 
 #include <gst/check/gstcheck.h>
 #include <gst/video/video.h>
-#include <gst/check/gstharness.h>
 
 static GMainLoop *main_loop;
+
 static void
 message_received (GstBus * bus, GstMessage * message, GstPipeline * bin)
 {
@@ -191,6 +191,7 @@ GST_START_TEST (test_overlay_position)
       }
     }
   }
+  gst_video_frame_unmap (&frame);
 
   /* cleanup */
   gst_buffer_replace (&handoff_buffer, NULL);

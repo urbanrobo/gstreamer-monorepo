@@ -172,7 +172,8 @@ struct _GstRTSPConnection
   GMutex socket_use_mutex;
   gboolean manual_http;
   gboolean may_cancel;
-  GCancellable *cancellable;
+  GMutex cancellable_mutex;
+  GCancellable *cancellable;    /* protected by cancellable_mutex */
 
   gchar tunnelid[TUNNELID_LEN];
   gboolean tunneled;
@@ -352,6 +353,20 @@ socket_client_event (GSocketClient * client, GSocketClientEvent event,
   }
 }
 
+/* transfer full */
+static GCancellable *
+get_cancellable (GstRTSPConnection * conn)
+{
+  GCancellable *cancellable = NULL;
+
+  g_mutex_lock (&conn->cancellable_mutex);
+  if (conn->cancellable)
+    cancellable = g_object_ref (conn->cancellable);
+  g_mutex_unlock (&conn->cancellable_mutex);
+
+  return cancellable;
+}
+
 /**
  * gst_rtsp_connection_create:
  * @url: a #GstRTSPUrl
@@ -377,6 +392,7 @@ gst_rtsp_connection_create (const GstRTSPUrl * url, GstRTSPConnection ** conn)
 
   newconn->may_cancel = TRUE;
   newconn->cancellable = g_cancellable_new ();
+  g_mutex_init (&newconn->cancellable_mutex);
   newconn->client = g_socket_client_new ();
 
   if (url->transports & GST_RTSP_LOWER_TRANS_TLS)
@@ -437,7 +453,7 @@ collect_addresses (GSocket * socket, gchar ** ip, guint16 * port,
  * @ip: the IP address of the other end
  * @port: the port used by the other end
  * @initial_buffer: data already read from @fd
- * @conn: (out) (transfer full): storage for a #GstRTSPConnection
+ * @conn: (out) (transfer full) (nullable): storage for a #GstRTSPConnection
  *
  * Create a new #GstRTSPConnection for handling communication on the existing
  * socket @socket. The @initial_buffer contains zero terminated data already
@@ -461,6 +477,8 @@ gst_rtsp_connection_create_from_socket (GSocket * socket, const gchar * ip,
   g_return_val_if_fail (G_IS_SOCKET (socket), GST_RTSP_EINVAL);
   g_return_val_if_fail (ip != NULL, GST_RTSP_EINVAL);
   g_return_val_if_fail (conn != NULL, GST_RTSP_EINVAL);
+
+  *conn = NULL;
 
   if (!collect_addresses (socket, &local_ip, NULL, FALSE, &err))
     goto getnameinfo_failed;
@@ -515,7 +533,7 @@ newconn_failed:
 /**
  * gst_rtsp_connection_accept:
  * @socket: a socket
- * @conn: (out) (transfer full): storage for a #GstRTSPConnection
+ * @conn: (out) (transfer full) (nullable): storage for a #GstRTSPConnection
  * @cancellable: a #GCancellable to cancel the operation
  *
  * Accept a new connection on @socket and create a new #GstRTSPConnection for
@@ -535,6 +553,8 @@ gst_rtsp_connection_accept (GSocket * socket, GstRTSPConnection ** conn,
 
   g_return_val_if_fail (G_IS_SOCKET (socket), GST_RTSP_EINVAL);
   g_return_val_if_fail (conn != NULL, GST_RTSP_EINVAL);
+
+  *conn = NULL;
 
   client_sock = g_socket_accept (socket, cancellable, &err);
   if (!client_sock)
@@ -627,6 +647,15 @@ gst_rtsp_connection_get_tls (GstRTSPConnection * conn, GError ** error)
  * Sets the TLS validation flags to be used to verify the peer
  * certificate when a TLS connection is established.
  *
+ * GLib guarantees that if certificate verification fails, at least one error
+ * will be set, but it does not guarantee that all possible errors will be
+ * set. Accordingly, you may not safely decide to ignore any particular type
+ * of error.
+ *
+ * For example, it would be incorrect to mask %G_TLS_CERTIFICATE_EXPIRED if
+ * you want to allow expired certificates, because this could potentially be
+ * the only error flag set even if other problems exist with the certificate.
+ *
  * Returns: TRUE if the validation flags are set correctly, or FALSE if
  * @conn is NULL or is not a TLS connection.
  *
@@ -641,8 +670,10 @@ gst_rtsp_connection_set_tls_validation_flags (GstRTSPConnection * conn,
   g_return_val_if_fail (conn != NULL, FALSE);
 
   res = g_socket_client_get_tls (conn->client);
+  G_GNUC_BEGIN_IGNORE_DEPRECATIONS;
   if (res)
     g_socket_client_set_tls_validation_flags (conn->client, flags);
+  G_GNUC_END_IGNORE_DEPRECATIONS;
 
   return res;
 }
@@ -654,7 +685,16 @@ gst_rtsp_connection_set_tls_validation_flags (GstRTSPConnection * conn,
  * Gets the TLS validation flags used to verify the peer certificate
  * when a TLS connection is established.
  *
- * Returns: the validationg flags.
+ * GLib guarantees that if certificate verification fails, at least one error
+ * will be set, but it does not guarantee that all possible errors will be
+ * set. Accordingly, you may not safely decide to ignore any particular type
+ * of error.
+ *
+ * For example, it would be incorrect to ignore %G_TLS_CERTIFICATE_EXPIRED if
+ * you want to allow expired certificates, because this could potentially be
+ * the only error flag set even if other problems exist with the certificate.
+ *
+ * Returns: the validation flags.
  *
  * Since: 1.2.1
  */
@@ -663,13 +703,15 @@ gst_rtsp_connection_get_tls_validation_flags (GstRTSPConnection * conn)
 {
   g_return_val_if_fail (conn != NULL, 0);
 
+  G_GNUC_BEGIN_IGNORE_DEPRECATIONS;
   return g_socket_client_get_tls_validation_flags (conn->client);
+  G_GNUC_END_IGNORE_DEPRECATIONS;
 }
 
 /**
  * gst_rtsp_connection_set_tls_database:
  * @conn: a #GstRTSPConnection
- * @database: a #GTlsDatabase
+ * @database: (nullable): a #GTlsDatabase
  *
  * Sets the anchor certificate authorities database. This certificate
  * database will be used to verify the server's certificate in case it
@@ -703,7 +745,7 @@ gst_rtsp_connection_set_tls_database (GstRTSPConnection * conn,
  * after a server certificate can't be verified with the default
  * certificate database.
  *
- * Returns: (transfer full): the anchor certificate authorities database, or NULL if no
+ * Returns: (transfer full) (nullable): the anchor certificate authorities database, or NULL if no
  * database has been previously set. Use g_object_unref() to release the
  * certificate database.
  *
@@ -725,7 +767,7 @@ gst_rtsp_connection_get_tls_database (GstRTSPConnection * conn)
 /**
  * gst_rtsp_connection_set_tls_interaction:
  * @conn: a #GstRTSPConnection
- * @interaction: a #GTlsInteraction
+ * @interaction: (nullable): a #GTlsInteraction
  *
  * Sets a #GTlsInteraction object to be used when the connection or certificate
  * database need to interact with the user. This will be used to prompt the
@@ -759,7 +801,7 @@ gst_rtsp_connection_set_tls_interaction (GstRTSPConnection * conn,
  * database need to interact with the user. This will be used to prompt the
  * user for passwords where necessary.
  *
- * Returns: (transfer full): a reference on the #GTlsInteraction. Use
+ * Returns: (transfer full) (nullable): a reference on the #GTlsInteraction. Use
  * g_object_unref() to release.
  *
  * Since: 1.6
@@ -839,6 +881,7 @@ setup_tunneling (GstRTSPConnection * conn, gint64 timeout, gchar * uri,
   gchar *connection_uri = NULL;
   gchar *request_uri = NULL;
   gchar *host = NULL;
+  GCancellable *cancellable;
 
   url = conn->url;
 
@@ -896,18 +939,23 @@ setup_tunneling (GstRTSPConnection * conn, gint64 timeout, gchar * uri,
 
   connection_uri = get_tunneled_connection_uri_strdup (url, url_port);
 
+  cancellable = get_cancellable (conn);
+
   /* connect to the host/port */
   if (conn->proxy_host) {
     connection = g_socket_client_connect_to_host (conn->client,
-        conn->proxy_host, conn->proxy_port, conn->cancellable, &error);
+        conn->proxy_host, conn->proxy_port, cancellable, &error);
     request_uri = g_strdup (connection_uri);
   } else {
     connection = g_socket_client_connect_to_uri (conn->client,
-        connection_uri, 0, conn->cancellable, &error);
+        connection_uri, 0, cancellable, &error);
     request_uri =
         g_strdup_printf ("%s%s%s", url->abspath,
         url->query ? "?" : "", url->query ? url->query : "");
   }
+
+  g_clear_object (&cancellable);
+
   if (connection == NULL)
     goto connect_failed;
 
@@ -1033,6 +1081,7 @@ gst_rtsp_connection_connect_with_response_usec (GstRTSPConnection * conn,
   GstClockTime to;
   guint16 url_port;
   GstRTSPUrl *url;
+  GCancellable *cancellable;
 
   g_return_val_if_fail (conn != NULL, GST_RTSP_EINVAL);
   g_return_val_if_fail (conn->url != NULL, GST_RTSP_EINVAL);
@@ -1052,18 +1101,23 @@ gst_rtsp_connection_connect_with_response_usec (GstRTSPConnection * conn,
     connection_uri = gst_rtsp_url_get_request_uri (url);
   }
 
+  cancellable = get_cancellable (conn);
+
   if (conn->proxy_host) {
     connection = g_socket_client_connect_to_host (conn->client,
-        conn->proxy_host, conn->proxy_port, conn->cancellable, &error);
+        conn->proxy_host, conn->proxy_port, cancellable, &error);
     request_uri = g_strdup (connection_uri);
   } else {
     connection = g_socket_client_connect_to_uri (conn->client,
-        connection_uri, url_port, conn->cancellable, &error);
+        connection_uri, url_port, cancellable, &error);
 
     /* use the relative component of the uri for non-proxy connections */
     request_uri = g_strdup_printf ("%s%s%s", url->abspath,
         url->query ? "?" : "", url->query ? url->query : "");
   }
+
+  g_clear_object (&cancellable);
+
   if (connection == NULL)
     goto connect_failed;
 
@@ -1289,6 +1343,8 @@ write_bytes (GOutputStream * stream, const guint8 * buffer, guint * idx,
   /* ERRORS */
 error:
   {
+    g_object_unref (cancellable);
+
     if (G_UNLIKELY (r == 0))
       return GST_RTSP_EEOF;
 
@@ -1304,7 +1360,6 @@ error:
 }
 
 /* NOTE: This changes the values of vectors if multiple iterations are needed! */
-#if GLIB_CHECK_VERSION(2, 59, 1)
 static GstRTSPResult
 writev_bytes (GOutputStream * stream, GOutputVector * vectors, gint n_vectors,
     gsize * bytes_written, gboolean block, GCancellable * cancellable)
@@ -1373,31 +1428,6 @@ error:
     return ret;
   }
 }
-#else
-static GstRTSPResult
-writev_bytes (GOutputStream * stream, GOutputVector * vectors, gint n_vectors,
-    gsize * bytes_written, gboolean block, GCancellable * cancellable)
-{
-  gsize _bytes_written = 0;
-  guint written;
-  gint i;
-  GstRTSPResult res = GST_RTSP_OK;
-
-  for (i = 0; i < n_vectors; i++) {
-    written = 0;
-    res =
-        write_bytes (stream, vectors[i].buffer, &written, vectors[i].size,
-        block, cancellable);
-    _bytes_written += written;
-    if (G_UNLIKELY (res != GST_RTSP_OK))
-      break;
-  }
-
-  *bytes_written = _bytes_written;
-
-  return res;
-}
-#endif
 
 static gint
 fill_raw_bytes (GstRTSPConnection * conn, guint8 * buffer, guint size,
@@ -1422,13 +1452,19 @@ fill_raw_bytes (GstRTSPConnection * conn, guint8 * buffer, guint size,
   if (G_LIKELY (size > (guint) out)) {
     gssize r;
     gsize count = size - out;
+    GCancellable *cancellable;
+
+    cancellable = conn->may_cancel ? get_cancellable (conn) : NULL;
+
     if (block)
       r = g_input_stream_read (conn->input_stream, (gchar *) & buffer[out],
-          count, conn->may_cancel ? conn->cancellable : NULL, err);
+          count, cancellable, err);
     else
       r = g_pollable_input_stream_read_nonblocking (G_POLLABLE_INPUT_STREAM
           (conn->input_stream), (gchar *) & buffer[out], count,
-          conn->may_cancel ? conn->cancellable : NULL, err);
+          cancellable, err);
+
+    g_clear_object (&cancellable);
 
     if (G_UNLIKELY (r < 0)) {
       if (out == 0) {
@@ -1711,7 +1747,7 @@ clear_write_socket_timeout (GstRTSPConnection * conn)
 /**
  * gst_rtsp_connection_write_usec:
  * @conn: a #GstRTSPConnection
- * @data: the data to write
+ * @data: (array length=size): the data to write
  * @size: the size of @data
  * @timeout: a timeout value or 0
  *
@@ -1732,6 +1768,7 @@ gst_rtsp_connection_write_usec (GstRTSPConnection * conn, const guint8 * data,
 {
   guint offset;
   GstRTSPResult res;
+  GCancellable *cancellable;
 
   g_return_val_if_fail (conn != NULL, GST_RTSP_EINVAL);
   g_return_val_if_fail (data != NULL || size == 0, GST_RTSP_EINVAL);
@@ -1741,9 +1778,10 @@ gst_rtsp_connection_write_usec (GstRTSPConnection * conn, const guint8 * data,
 
   set_write_socket_timeout (conn, timeout);
 
+  cancellable = get_cancellable (conn);
   res =
-      write_bytes (conn->output_stream, data, &offset, size, TRUE,
-      conn->cancellable);
+      write_bytes (conn->output_stream, data, &offset, size, TRUE, cancellable);
+  g_clear_object (&cancellable);
 
   clear_write_socket_timeout (conn);
 
@@ -1937,6 +1975,7 @@ gst_rtsp_connection_send_messages_usec (GstRTSPConnection * conn,
   guint n_vectors, n_memories;
   gint i, j, k;
   gsize bytes_to_write, bytes_written;
+  GCancellable *cancellable;
 
   g_return_val_if_fail (conn != NULL, GST_RTSP_EINVAL);
   g_return_val_if_fail (messages != NULL || n_messages == 0, GST_RTSP_EINVAL);
@@ -2053,9 +2092,11 @@ gst_rtsp_connection_send_messages_usec (GstRTSPConnection * conn,
   /* write request: this is synchronous */
   set_write_socket_timeout (conn, timeout);
 
+  cancellable = get_cancellable (conn);
   res =
       writev_bytes (conn->output_stream, vectors, n_vectors, &bytes_written,
-      TRUE, conn->cancellable);
+      TRUE, cancellable);
+  g_clear_object (&cancellable);
 
   clear_write_socket_timeout (conn);
 
@@ -2334,8 +2375,16 @@ parse_line (guint8 * buffer, GstRTSPMessage * msg)
             comma = next_value;
           } else if (*next_value == ' ' && next_value[1] != ',' &&
               next_value[1] != '=' && comma != NULL) {
-            next_value = comma;
-            comma = NULL;
+            /* only process this as a separate header if there is more than just
+             * trailing whitespace after this */
+            for (gchar * curr_char = next_value; *curr_char != '\0';
+                curr_char++) {
+              if (!g_ascii_isspace (*curr_char)) {
+                next_value = comma;
+                comma = NULL;
+                break;
+              }
+            }
             break;
           }
         } else if (*next_value == ',')
@@ -2685,7 +2734,7 @@ invalid_format:
 /**
  * gst_rtsp_connection_read_usec:
  * @conn: a #GstRTSPConnection
- * @data: the data to read
+ * @data: (array length=size): the data to read
  * @size: the size of @data
  * @timeout: a timeout value in microseconds
  *
@@ -2766,7 +2815,7 @@ no_message:
 /**
  * gst_rtsp_connection_receive_usec:
  * @conn: a #GstRTSPConnection
- * @message: the message to read
+ * @message: (transfer none): the message to read
  * @timeout: a timeout value or 0
  *
  * Attempt to read into @message from the connected @conn, blocking up to
@@ -2928,8 +2977,10 @@ gst_rtsp_connection_free (GstRTSPConnection * conn)
 
   res = gst_rtsp_connection_close (conn);
 
-  if (conn->cancellable)
-    g_object_unref (conn->cancellable);
+  g_mutex_lock (&conn->cancellable_mutex);
+  g_clear_object (&conn->cancellable);
+  g_mutex_unlock (&conn->cancellable_mutex);
+  g_mutex_clear (&conn->cancellable_mutex);
   if (conn->client)
     g_object_unref (conn->client);
   if (conn->tls_database)
@@ -2952,7 +3003,7 @@ gst_rtsp_connection_free (GstRTSPConnection * conn)
  * gst_rtsp_connection_poll_usec:
  * @conn: a #GstRTSPConnection
  * @events: a bitmask of #GstRTSPEvent flags to check
- * @revents: location for result flags
+ * @revents: (out caller-allocates): location for result flags
  * @timeout: a timeout in microseconds
  *
  * Wait up to the specified @timeout for the connection to become available for
@@ -2975,6 +3026,7 @@ gst_rtsp_connection_poll_usec (GstRTSPConnection * conn, GstRTSPEvent events,
   GMainContext *ctx;
   GSource *rs, *ws, *ts;
   GIOCondition condition;
+  GCancellable *cancellable;
 
   g_return_val_if_fail (conn != NULL, GST_RTSP_EINVAL);
   g_return_val_if_fail (events != 0, GST_RTSP_EINVAL);
@@ -2992,21 +3044,22 @@ gst_rtsp_connection_poll_usec (GstRTSPConnection * conn, GstRTSPEvent events,
     g_source_unref (ts);
   }
 
+  cancellable = get_cancellable (conn);
   if (events & GST_RTSP_EV_READ) {
     rs = g_socket_create_source (conn->read_socket, G_IO_IN | G_IO_PRI,
-        conn->cancellable);
+        cancellable);
     g_source_set_dummy_callback (rs);
     g_source_attach (rs, ctx);
     g_source_unref (rs);
   }
 
   if (events & GST_RTSP_EV_WRITE) {
-    ws = g_socket_create_source (conn->write_socket, G_IO_OUT,
-        conn->cancellable);
+    ws = g_socket_create_source (conn->write_socket, G_IO_OUT, cancellable);
     g_source_set_dummy_callback (ws);
     g_source_attach (ws, ctx);
     g_source_unref (ws);
   }
+  g_clear_object (&cancellable);
 
   /* Returns after handling all pending events */
   while (!g_main_context_iteration (ctx, TRUE));
@@ -3115,10 +3168,14 @@ gst_rtsp_connection_flush (GstRTSPConnection * conn, gboolean flush)
   g_return_val_if_fail (conn != NULL, GST_RTSP_EINVAL);
 
   if (flush) {
-    g_cancellable_cancel (conn->cancellable);
+    GCancellable *cancellable = get_cancellable (conn);
+    g_cancellable_cancel (cancellable);
+    g_clear_object (&cancellable);
   } else {
+    g_mutex_lock (&conn->cancellable_mutex);
     g_object_unref (conn->cancellable);
     conn->cancellable = g_cancellable_new ();
+    g_mutex_unlock (&conn->cancellable_mutex);
   }
 
   return GST_RTSP_OK;
@@ -3439,7 +3496,7 @@ gst_rtsp_connection_set_ip (GstRTSPConnection * conn, const gchar * ip)
  *
  * Get the file descriptor for reading.
  *
- * Returns: (transfer none): the file descriptor used for reading or %NULL on
+ * Returns: (transfer none) (nullable): the file descriptor used for reading or %NULL on
  * error. The file descriptor remains valid until the connection is closed.
  */
 GSocket *
@@ -3457,7 +3514,7 @@ gst_rtsp_connection_get_read_socket (const GstRTSPConnection * conn)
  *
  * Get the file descriptor for writing.
  *
- * Returns: (transfer none): the file descriptor used for writing or NULL on
+ * Returns: (transfer none) (nullable): the file descriptor used for writing or NULL on
  * error. The file descriptor remains valid until the connection is closed.
  */
 GSocket *
@@ -3526,7 +3583,7 @@ gst_rtsp_connection_is_tunneled (const GstRTSPConnection * conn)
  *
  * Get the tunnel session id the connection.
  *
- * Returns: returns a non-empty string if @conn is being tunneled over HTTP.
+ * Returns: (nullable): returns a non-empty string if @conn is being tunneled over HTTP.
  */
 const gchar *
 gst_rtsp_connection_get_tunnelid (const GstRTSPConnection * conn)
@@ -3581,7 +3638,7 @@ gst_rtsp_connection_get_ignore_x_server_reply (const GstRTSPConnection * conn)
 /**
  * gst_rtsp_connection_do_tunnel:
  * @conn: a #GstRTSPConnection
- * @conn2: a #GstRTSPConnection or %NULL
+ * @conn2: (nullable): a #GstRTSPConnection or %NULL
  *
  * If @conn received the first tunnel connection and @conn2 received
  * the second tunnel connection, link the two connections together so that
@@ -3632,6 +3689,7 @@ gst_rtsp_connection_do_tunnel (GstRTSPConnection * conn,
     }
 
     /* clean up some of the state of conn2 */
+    g_mutex_lock (&conn2->cancellable_mutex);
     g_cancellable_cancel (conn2->cancellable);
     conn2->write_socket = conn2->read_socket = NULL;
     conn2->socket0 = NULL;
@@ -3642,6 +3700,7 @@ gst_rtsp_connection_do_tunnel (GstRTSPConnection * conn,
     conn2->control_stream = NULL;
     g_object_unref (conn2->cancellable);
     conn2->cancellable = NULL;
+    g_mutex_unlock (&conn2->cancellable_mutex);
 
     /* We make socket0 the write socket and socket1 the read socket. */
     conn->write_socket = conn->socket0;
@@ -4000,6 +4059,7 @@ gst_rtsp_source_dispatch_write (GPollableOutputStream * stream,
     guint n_vectors, n_memories, n_ids, drop_messages;
     gint i, j, l, n_mmap;
     GstRTSPSerializedMessage *msg;
+    GCancellable *cancellable;
 
     /* if this connection was already closed, stop now */
     if (G_POLLABLE_OUTPUT_STREAM (conn->output_stream) != stream ||
@@ -4125,10 +4185,14 @@ gst_rtsp_source_dispatch_write (GPollableOutputStream * stream,
       }
     }
 
+    cancellable = get_cancellable (watch->conn);
+
     res =
         writev_bytes (watch->conn->output_stream, vectors, n_vectors,
-        &bytes_written, FALSE, watch->conn->cancellable);
+        &bytes_written, FALSE, cancellable);
     g_assert (bytes_written == bytes_to_write || res != GST_RTSP_OK);
+
+    g_clear_object (&cancellable);
 
     /* First unmap all memories here, this simplifies the code below
      * as we don't have to skip all memories that were already written
@@ -4319,7 +4383,7 @@ static GSourceFuncs gst_rtsp_source_funcs = {
  *
  * @conn must exist for the entire lifetime of the watch.
  *
- * Returns: a #GstRTSPWatch that can be used for asynchronous RTSP
+ * Returns: (transfer full): a #GstRTSPWatch that can be used for asynchronous RTSP
  * communication. Free with gst_rtsp_watch_unref () after usage.
  */
 GstRTSPWatch *
@@ -4414,7 +4478,7 @@ gst_rtsp_watch_reset (GstRTSPWatch * watch)
 /**
  * gst_rtsp_watch_attach:
  * @watch: a #GstRTSPWatch
- * @context: a GMainContext (if NULL, the default context will be used)
+ * @context: (nullable): a GMainContext (if NULL, the default context will be used)
  *
  * Adds a #GstRTSPWatch to a context so that it will be executed within that context.
  *
@@ -4505,6 +4569,7 @@ gst_rtsp_watch_write_serialized_messages (GstRTSPWatch * watch,
 {
   GstRTSPResult res;
   GMainContext *context = NULL;
+  GCancellable *cancellable;
   gint i;
 
   g_return_val_if_fail (watch != NULL, GST_RTSP_EINVAL);
@@ -4565,10 +4630,14 @@ gst_rtsp_watch_write_serialized_messages (GstRTSPWatch * watch,
       }
     }
 
+    cancellable = get_cancellable (watch->conn);
+
     res =
         writev_bytes (watch->conn->output_stream, vectors, n_vectors,
-        &bytes_written, FALSE, watch->conn->cancellable);
+        &bytes_written, FALSE, cancellable);
     g_assert (bytes_written == bytes_to_write || res != GST_RTSP_OK);
+
+    g_clear_object (&cancellable);
 
     /* At this point we sent everything we could without blocking or
      * error and updated the offsets inside the message accordingly */
@@ -4741,7 +4810,7 @@ too_much_backlog:
  * @watch: a #GstRTSPWatch
  * @data: (array length=size) (transfer full): the data to queue
  * @size: the size of @data
- * @id: (out) (allow-none): location for a message ID or %NULL
+ * @id: (out) (optional): location for a message ID or %NULL
  *
  * Write @data using the connection of the @watch. If it cannot be sent
  * immediately, it will be queued for transmission in @watch. The contents of
@@ -4778,7 +4847,7 @@ gst_rtsp_watch_write_data (GstRTSPWatch * watch, const guint8 * data,
  * gst_rtsp_watch_send_message:
  * @watch: a #GstRTSPWatch
  * @message: a #GstRTSPMessage
- * @id: (out) (allow-none): location for a message ID or %NULL
+ * @id: (out) (optional): location for a message ID or %NULL
  *
  * Send a @message using the connection of the @watch. If it cannot be sent
  * immediately, it will be queued for transmission in @watch. The contents of
@@ -4804,7 +4873,7 @@ gst_rtsp_watch_send_message (GstRTSPWatch * watch, GstRTSPMessage * message,
  * @watch: a #GstRTSPWatch
  * @messages: (array length=n_messages): the messages to send
  * @n_messages: the number of messages to send
- * @id: (out) (allow-none): location for a message ID or %NULL
+ * @id: (out) (optional): location for a message ID or %NULL
  *
  * Sends @messages using the connection of the @watch. If they cannot be sent
  * immediately, they will be queued for transmission in @watch. The contents of
@@ -4999,7 +5068,7 @@ gst_rtsp_connection_connect_with_response (GstRTSPConnection * conn,
 /**
  * gst_rtsp_connection_read:
  * @conn: a #GstRTSPConnection
- * @data: the data to read
+ * @data: (array length=size): the data to read
  * @size: the size of @data
  * @timeout: a timeout value or %NULL
  *
@@ -5023,7 +5092,7 @@ gst_rtsp_connection_read (GstRTSPConnection * conn, guint8 * data, guint size,
 /**
  * gst_rtsp_connection_write:
  * @conn: a #GstRTSPConnection
- * @data: the data to write
+ * @data: (array length=size): the data to write
  * @size: the size of @data
  * @timeout: a timeout value or %NULL
  *
@@ -5097,7 +5166,7 @@ gst_rtsp_connection_send_messages (GstRTSPConnection * conn,
 /**
  * gst_rtsp_connection_receive:
  * @conn: a #GstRTSPConnection
- * @message: the message to read
+ * @message: (transfer none): the message to read
  * @timeout: a timeout value or %NULL
  *
  * Attempt to read into @message from the connected @conn, blocking up to
@@ -5121,7 +5190,7 @@ gst_rtsp_connection_receive (GstRTSPConnection * conn, GstRTSPMessage * message,
  * gst_rtsp_connection_poll:
  * @conn: a #GstRTSPConnection
  * @events: a bitmask of #GstRTSPEvent flags to check
- * @revents: location for result flags
+ * @revents: (out): location for result flags
  * @timeout: a timeout
  *
  * Wait up to the specified @timeout for the connection to become available for

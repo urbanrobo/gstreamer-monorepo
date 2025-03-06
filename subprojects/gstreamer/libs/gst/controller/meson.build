@@ -45,7 +45,7 @@ gst_controller = library('gstcontroller-@0@'.format(apiversion),
   soversion : soversion,
   darwin_versions : osxversion,
   include_directories : [configinc, libsinc],
-  dependencies : [gobject_dep, glib_dep, mathlib, gst_dep],
+  dependencies : [mathlib, gst_dep],
 )
 
 library_def = {'lib': gst_controller}
@@ -79,7 +79,7 @@ if build_gir
     gst_controller_gen_sources += [gst_controller_gir]
   endif
 endif
-libraries += [[pkg_name, library_def]]
+gst_libraries += [[pkg_name, library_def]]
 
 gst_controller_dep = declare_dependency(link_with : gst_controller,
   include_directories : [libsinc],

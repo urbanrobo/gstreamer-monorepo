@@ -1,6 +1,6 @@
 project('gst-rtsp-server', 'c',
-  version : '1.21.0.1',
-  meson_version : '>= 0.59',
+  version : '1.22.12.1',
+  meson_version : '>= 0.62',
   default_options : ['warning_level=1', 'buildtype=debugoptimized'])
 
 gst_version = meson.project_version()
@@ -16,7 +16,7 @@ endif
 gst_version_is_stable = gst_version_minor.is_even()
 gst_version_is_dev = gst_version_minor.is_odd() and gst_version_micro < 90
 
-glib_req = '>= 2.56.0'
+glib_req = '>= 2.62.0'
 
 if gst_version_is_stable
   gst_req = '>= @0@.@1@.0'.format(gst_version_major, gst_version_minor)
@@ -42,18 +42,16 @@ if cc.has_link_argument('-Wl,-Bsymbolic-functions')
   add_project_link_arguments('-Wl,-Bsymbolic-functions', language : 'c')
 endif
 
-# Symbol visibility
-if cc.get_id() == 'msvc'
-  export_define = '__declspec(dllexport) extern'
-elif cc.has_argument('-fvisibility=hidden')
-  add_project_arguments('-fvisibility=hidden', language: 'c')
-  export_define = 'extern __attribute__ ((visibility ("default")))'
-else
-  export_define = 'extern'
+# glib doesn't support unloading, which means that unloading and reloading
+# any library that registers static types will fail
+if cc.has_link_argument('-Wl,-z,nodelete')
+  add_project_link_arguments('-Wl,-z,nodelete', language: 'c')
 endif
 
-# Passing this through the command line would be too messy
-cdata.set('GST_API_EXPORT', export_define)
+# Symbol visibility
+if cc.has_argument('-fvisibility=hidden')
+  add_project_arguments('-fvisibility=hidden', language: 'c')
+endif
 
 # Disable strict aliasing
 if cc.has_argument('-fno-strict-aliasing')
@@ -126,7 +124,6 @@ warning_flags = [
   '-Wmissing-include-dirs',
   '-Waddress',
   '-Wno-multichar',
-  '-Wdeclaration-after-statement',
   '-Wvla',
   '-Wpointer-arith',
 ]
@@ -139,8 +136,6 @@ endforeach
 
 rtspserver_incs = include_directories('gst/rtsp-server', '.')
 
-glib_dep = dependency('glib-2.0', version : glib_req,
-  fallback: ['glib', 'libglib_dep'])
 gst_dep = dependency('gstreamer-1.0', version : gst_req,
   fallback : ['gstreamer', 'gst_dep'])
 gstrtsp_dep = dependency('gstreamer-rtsp-1.0', version : gst_req,
@@ -194,7 +189,7 @@ endif
 plugins = []
 pkgconfig_subdirs = ['gstreamer-1.0']
 static_build = get_option('default_library') == 'static'
-libraries = []
+gst_libraries = []
 
 subdir('gst')
 if not get_option('tests').disabled()
@@ -215,3 +210,23 @@ if gst_version_nano == 0
 endif
 
 configure_file(output: 'config.h', configuration: cdata)
+
+meson.add_dist_script('scripts/gen-changelog.py', meson.project_name(), '1.20.0', meson.project_version())
+
+plugin_names = []
+gst_plugins = []
+foreach plugin: plugins
+  pkgconfig.generate(plugin, install_dir: plugins_pkgconfig_install_dir)
+  dep = declare_dependency(link_with: plugin, variables: {'full_path': plugin.full_path()})
+  meson.override_dependency(plugin.name(), dep)
+  gst_plugins += [dep]
+  if plugin.name().startswith('gst')
+    plugin_names += [plugin.name().substring(3)]
+  else
+    plugin_names += [plugin.name()]
+  endif
+endforeach
+
+summary({
+    'Plugins': plugin_names,
+}, list_sep: ', ')

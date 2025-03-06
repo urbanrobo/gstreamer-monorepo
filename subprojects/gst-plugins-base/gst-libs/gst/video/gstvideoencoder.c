@@ -134,6 +134,9 @@ struct _GstVideoEncoderPrivate
   gint64 min_latency;
   gint64 max_latency;
 
+  /* Tracks whether the latency message was posted at least once */
+  gboolean posted_latency_msg;
+
   /* FIXME 2.0: Use a GQueue or similar, see GstVideoCodecFrame::events */
   GList *current_frame_events;
 
@@ -444,18 +447,6 @@ _flush_events (GstPad * pad, GList * events)
   return NULL;
 }
 
-#if !GLIB_CHECK_VERSION(2, 60, 0)
-#define g_queue_clear_full queue_clear_full
-static void
-queue_clear_full (GQueue * queue, GDestroyNotify free_func)
-{
-  gpointer data;
-
-  while ((data = g_queue_pop_head (queue)) != NULL)
-    free_func (data);
-}
-#endif
-
 static gboolean
 gst_video_encoder_reset (GstVideoEncoder * encoder, gboolean hard)
 {
@@ -524,6 +515,8 @@ gst_video_encoder_reset (GstVideoEncoder * encoder, gboolean hard)
 
     priv->dropped = 0;
     priv->processed = 0;
+
+    priv->posted_latency_msg = FALSE;
   } else {
     GList *l;
 
@@ -798,8 +791,8 @@ parse_fail:
 /**
  * gst_video_encoder_proxy_getcaps:
  * @enc: a #GstVideoEncoder
- * @caps: (allow-none): initial caps
- * @filter: (allow-none): filter caps
+ * @caps: (nullable): initial caps
+ * @filter: (nullable): filter caps
  *
  * Returns caps that express @caps (or sink template caps if @caps == NULL)
  * restricted to resolution/format/... combinations supported by downstream
@@ -2198,7 +2191,8 @@ foreach_metadata (GstBuffer * inbuf, GstMeta ** meta, gpointer user_data)
   const GstMetaInfo *info = (*meta)->info;
   gboolean do_copy = FALSE;
 
-  if (gst_meta_api_type_has_tag (info->api, _gst_meta_tag_memory)) {
+  if (gst_meta_api_type_has_tag (info->api, _gst_meta_tag_memory)
+      || gst_meta_api_type_has_tag (info->api, _gst_meta_tag_memory_reference)) {
     /* never call the transform_meta with memory specific metadata */
     GST_DEBUG_OBJECT (encoder, "not copying memory specific metadata %s",
         g_type_name (info->api));
@@ -2784,15 +2778,16 @@ done:
  *
  * Get the current #GstVideoCodecState
  *
- * Returns: (transfer full): #GstVideoCodecState describing format of video data.
+ * Returns: (transfer full) (nullable): #GstVideoCodecState describing format of video data.
  */
 GstVideoCodecState *
 gst_video_encoder_get_output_state (GstVideoEncoder * encoder)
 {
-  GstVideoCodecState *state;
+  GstVideoCodecState *state = NULL;
 
   GST_VIDEO_ENCODER_STREAM_LOCK (encoder);
-  state = gst_video_codec_state_ref (encoder->priv->output_state);
+  if (encoder->priv->output_state)
+    state = gst_video_codec_state_ref (encoder->priv->output_state);
   GST_VIDEO_ENCODER_STREAM_UNLOCK (encoder);
 
   return state;
@@ -2802,7 +2797,7 @@ gst_video_encoder_get_output_state (GstVideoEncoder * encoder)
  * gst_video_encoder_set_output_state:
  * @encoder: a #GstVideoEncoder
  * @caps: (transfer full): the #GstCaps to use for the output
- * @reference: (allow-none) (transfer none): An optional reference @GstVideoCodecState
+ * @reference: (nullable) (transfer none): An optional reference @GstVideoCodecState
  *
  * Creates a new #GstVideoCodecState with the specified caps as the output state
  * for the encoder.
@@ -2823,7 +2818,7 @@ gst_video_encoder_get_output_state (GstVideoEncoder * encoder)
  * The new output state will only take effect (set on pads and buffers) starting
  * from the next call to #gst_video_encoder_finish_frame().
  *
- * Returns: (transfer full): the newly configured output state.
+ * Returns: (transfer full) (nullable): the newly configured output state.
  */
 GstVideoCodecState *
 gst_video_encoder_set_output_state (GstVideoEncoder * encoder, GstCaps * caps,
@@ -2863,30 +2858,49 @@ gst_video_encoder_set_output_state (GstVideoEncoder * encoder, GstCaps * caps,
  * @min_latency: minimum latency
  * @max_latency: maximum latency
  *
- * Informs baseclass of encoding latency.
+ * Informs baseclass of encoding latency. If the provided values changed from
+ * previously provided ones, this will also post a LATENCY message on the bus
+ * so the pipeline can reconfigure its global latency.
  */
 void
 gst_video_encoder_set_latency (GstVideoEncoder * encoder,
     GstClockTime min_latency, GstClockTime max_latency)
 {
+  gboolean post_message = FALSE;
+
   g_return_if_fail (GST_CLOCK_TIME_IS_VALID (min_latency));
   g_return_if_fail (max_latency >= min_latency);
 
+  GST_DEBUG_OBJECT (encoder,
+      "min_latency:%" GST_TIME_FORMAT " max_latency:%" GST_TIME_FORMAT,
+      GST_TIME_ARGS (min_latency), GST_TIME_ARGS (max_latency));
+
   GST_OBJECT_LOCK (encoder);
-  encoder->priv->min_latency = min_latency;
-  encoder->priv->max_latency = max_latency;
+  if (encoder->priv->min_latency != min_latency) {
+    encoder->priv->min_latency = min_latency;
+    post_message = TRUE;
+  }
+  if (encoder->priv->max_latency != max_latency) {
+    encoder->priv->max_latency = max_latency;
+    post_message = TRUE;
+  }
+  if (!encoder->priv->posted_latency_msg) {
+    encoder->priv->posted_latency_msg = TRUE;
+    post_message = TRUE;
+  }
   GST_OBJECT_UNLOCK (encoder);
 
-  gst_element_post_message (GST_ELEMENT_CAST (encoder),
-      gst_message_new_latency (GST_OBJECT_CAST (encoder)));
+  if (post_message)
+    gst_element_post_message (GST_ELEMENT_CAST (encoder),
+        gst_message_new_latency (GST_OBJECT_CAST (encoder)));
 }
 
 /**
  * gst_video_encoder_get_latency:
  * @encoder: a #GstVideoEncoder
- * @min_latency: (out) (allow-none): address of variable in which to store the
+ * @min_latency: (out) (optional): address of variable in which to store the
  *     configured minimum latency, or %NULL
- * @max_latency: (out) (allow-none): address of variable in which to store the
+ * @max_latency: (out) (optional): address of variable in which to store the
  *     configured maximum latency, or %NULL
  *
  * Query the configured encoding latency. Results will be returned via
@@ -2910,7 +2924,7 @@ gst_video_encoder_get_latency (GstVideoEncoder * encoder,
  *
  * Get the oldest unfinished pending #GstVideoCodecFrame
  *
- * Returns: (transfer full): oldest unfinished pending #GstVideoCodecFrame
+ * Returns: (transfer full) (nullable): oldest unfinished pending #GstVideoCodecFrame
  */
 GstVideoCodecFrame *
 gst_video_encoder_get_oldest_frame (GstVideoEncoder * encoder)
@@ -2932,7 +2946,7 @@ gst_video_encoder_get_oldest_frame (GstVideoEncoder * encoder)
  *
  * Get a pending unfinished #GstVideoCodecFrame
  *
- * Returns: (transfer full): pending unfinished #GstVideoCodecFrame identified by @frame_number.
+ * Returns: (transfer full) (nullable): pending unfinished #GstVideoCodecFrame identified by @frame_number.
  */
 GstVideoCodecFrame *
 gst_video_encoder_get_frame (GstVideoEncoder * encoder, int frame_number)
@@ -2981,7 +2995,7 @@ gst_video_encoder_get_frames (GstVideoEncoder * encoder)
 /**
  * gst_video_encoder_merge_tags:
  * @encoder: a #GstVideoEncoder
- * @tags: (allow-none): a #GstTagList to merge, or NULL to unset
+ * @tags: (nullable): a #GstTagList to merge, or NULL to unset
  *     previously-set tags
  * @mode: the #GstTagMergeMode to use, usually #GST_TAG_MERGE_REPLACE
  *
@@ -3024,9 +3038,9 @@ gst_video_encoder_merge_tags (GstVideoEncoder * encoder,
 /**
  * gst_video_encoder_get_allocator:
  * @encoder: a #GstVideoEncoder
- * @allocator: (out) (allow-none) (transfer full): the #GstAllocator
+ * @allocator: (out) (optional) (nullable) (transfer full): the #GstAllocator
  * used
- * @params: (out) (allow-none) (transfer full): the
+ * @params: (out) (optional) (transfer full): the
  * #GstAllocationParams of @allocator
  *
  * Lets #GstVideoEncoder sub-classes to know the memory @allocator

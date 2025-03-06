@@ -1507,8 +1507,10 @@ again:
         || multicast) {
       GstRTSPAddressFlags flags;
 
-      if (addr)
+      if (addr) {
+        g_assert (*server_addr_out == NULL);
         rejected_addresses = g_list_prepend (rejected_addresses, addr);
+      }
 
       if (!pool)
         goto no_pool;
@@ -1558,9 +1560,15 @@ again:
   if (!g_socket_bind (rtp_socket, rtp_sockaddr, FALSE, NULL)) {
     GST_DEBUG_OBJECT (stream, "rtp bind() failed, will try again");
     g_object_unref (rtp_sockaddr);
-    if (transport_settings_defined)
+    if (transport_settings_defined) {
       goto transport_settings_error;
-    goto again;
+    } else if (*server_addr_out && ((pool
+                && gst_rtsp_address_pool_has_unicast_addresses (pool))
+            || multicast)) {
+      goto no_address;
+    } else {
+      goto again;
+    }
   }
   g_object_unref (rtp_sockaddr);
 
@@ -1985,7 +1993,7 @@ gst_rtsp_stream_get_server_port (GstRTSPStream * stream,
  *
  * Get the RTP session of this stream.
  *
- * Returns: (transfer full): The RTP session of this stream. Unref after usage.
+ * Returns: (transfer full) (nullable): The RTP session of this stream. Unref after usage.
  */
 GObject *
 gst_rtsp_stream_get_rtpsession (GstRTSPStream * stream)
@@ -2011,7 +2019,7 @@ gst_rtsp_stream_get_rtpsession (GstRTSPStream * stream)
  *
  * Get the SRTP encoder for this stream.
  *
- * Returns: (transfer full): The SRTP encoder for this stream. Unref after usage.
+ * Returns: (transfer full) (nullable): The SRTP encoder for this stream. Unref after usage.
  */
 GstElement *
 gst_rtsp_stream_get_srtp_encoder (GstRTSPStream * stream)
@@ -2636,16 +2644,20 @@ check_transport_backlog (GstRTSPStream * stream, GstRTSPStreamTransport * trans)
     gboolean is_rtp;
     gboolean popped;
 
-    popped =
-        gst_rtsp_stream_transport_backlog_pop (trans, &buffer, &buffer_list,
-        &is_rtp);
+    is_rtp = gst_rtsp_stream_transport_backlog_peek_is_rtp (trans);
 
-    g_assert (popped == TRUE);
+    if (!gst_rtsp_stream_transport_check_back_pressure (trans, is_rtp)) {
+      popped =
+          gst_rtsp_stream_transport_backlog_pop (trans, &buffer, &buffer_list,
+          &is_rtp);
 
-    send_ret = push_data (stream, trans, buffer, buffer_list, is_rtp);
+      g_assert (popped == TRUE);
 
-    gst_clear_buffer (&buffer);
-    gst_clear_buffer_list (&buffer_list);
+      send_ret = push_data (stream, trans, buffer, buffer_list, is_rtp);
+
+      gst_clear_buffer (&buffer);
+      gst_clear_buffer_list (&buffer_list);
+    }
   }
 
   gst_rtsp_stream_transport_unlock_backlog (trans);
@@ -2667,7 +2679,6 @@ send_tcp_message (GstRTSPStream * stream, gint idx)
   GstSample *sample;
   GstBuffer *buffer;
   GstBufferList *buffer_list;
-  guint n_messages = 0;
   gboolean is_rtp;
   GPtrArray *transports;
 
@@ -2699,10 +2710,6 @@ send_tcp_message (GstRTSPStream * stream, gint idx)
 
   /* We will get one message-sent notification per buffer or
    * complete buffer-list. We handle each buffer-list as a unit */
-  if (buffer)
-    n_messages += 1;
-  if (buffer_list)
-    n_messages += 1;
 
   transports = priv->tr_cache;
   if (transports)
@@ -4218,6 +4225,13 @@ gst_rtsp_stream_leave_bin (GstRTSPStream * stream, GstBin * bin,
     gst_rtsp_address_free (priv->server_addr_v6);
   priv->server_addr_v6 = NULL;
 
+  for (i = 0; i < 2; i++) {
+    g_clear_object (&priv->socket_v4[i]);
+    g_clear_object (&priv->socket_v6[i]);
+    g_clear_object (&priv->mcast_socket_v4[i]);
+    g_clear_object (&priv->mcast_socket_v6[i]);
+  }
+
   g_mutex_unlock (&priv->lock);
 
   return TRUE;
@@ -5589,7 +5603,7 @@ gst_rtsp_stream_query_position (GstRTSPStream * stream, gint64 * position)
     pad = gst_object_ref (priv->send_src[0]);
   } else {
     g_mutex_unlock (&priv->lock);
-    GST_WARNING_OBJECT (stream, "Couldn't obtain postion: erroneous pipeline");
+    GST_WARNING_OBJECT (stream, "Couldn't obtain position: erroneous pipeline");
     return FALSE;
   }
   g_mutex_unlock (&priv->lock);
@@ -5597,7 +5611,7 @@ gst_rtsp_stream_query_position (GstRTSPStream * stream, gint64 * position)
   if (sink) {
     if (!gst_element_query_position (sink, GST_FORMAT_TIME, position)) {
       GST_WARNING_OBJECT (stream,
-          "Couldn't obtain postion: position query failed");
+          "Couldn't obtain position: position query failed");
       gst_object_unref (sink);
       return FALSE;
     }
@@ -5608,7 +5622,7 @@ gst_rtsp_stream_query_position (GstRTSPStream * stream, gint64 * position)
 
     event = gst_pad_get_sticky_event (pad, GST_EVENT_SEGMENT, 0);
     if (!event) {
-      GST_WARNING_OBJECT (stream, "Couldn't obtain postion: no segment event");
+      GST_WARNING_OBJECT (stream, "Couldn't obtain position: no segment event");
       gst_object_unref (pad);
       return FALSE;
     }
@@ -5784,7 +5798,7 @@ beach:
  * Add a receiver and sender part to the pipeline based on the transport from
  * SETUP.
  *
- * Returns: %TRUE if the stream has been sucessfully updated.
+ * Returns: %TRUE if the stream has been successfully updated.
  *
  * Since: 1.14
  */
@@ -5816,7 +5830,7 @@ gst_rtsp_stream_complete_stream (GstRTSPStream * stream,
   priv->is_complete = TRUE;
   g_mutex_unlock (&priv->lock);
 
-  GST_DEBUG_OBJECT (stream, "pipeline sucsessfully updated");
+  GST_DEBUG_OBJECT (stream, "pipeline successfully updated");
   return TRUE;
 
 create_receiver_error:

@@ -18,10 +18,9 @@ if pango_dep.found()
     c_args : gst_plugins_base_args,
     link_args : noseh_link_args,
     include_directories: [configinc, libsinc],
-    dependencies : glib_deps + [pango_dep, video_dep, gst_dep, gst_base_dep, libm],
+    dependencies : [pango_dep, video_dep, gst_dep, gst_base_dep, libm],
     install : true,
     install_dir : plugins_install_dir,
   )
-  pkgconfig.generate(gstpango, install_dir : plugins_pkgconfig_install_dir)
   plugins += [gstpango]
 endif

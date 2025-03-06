@@ -17,6 +17,7 @@
 # Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
 # Boston, MA 02110-1301, USA.
 import argparse
+from fractions import Fraction
 import os
 import copy
 import sys
@@ -34,7 +35,7 @@ from launcher.loggable import Loggable, error
 from launcher.baseclasses import GstValidateTest, Test, \
     ScenarioManager, NamedDic, GstValidateTestsGenerator, \
     GstValidateMediaDescriptor, GstValidateEncodingTestInterface, \
-    GstValidateBaseTestManager, MediaDescriptor, MediaFormatCombination
+    GstValidateBaseTestManager, MediaDescriptor, MediaFormatCombination, VariableFramerateMode
 
 from launcher.utils import path2url, url2path, DEFAULT_TIMEOUT, which, \
     GST_SECOND, Result, Protocols, mkdir, printc, Colors, get_data_file, \
@@ -66,16 +67,16 @@ GST_VALIDATE_CAPS_TO_PROTOCOL = [("application/x-hls", Protocols.HLS),
                                  ("application/dash+xml", Protocols.DASH)]
 
 
-def expand_vars_in_list_recurse(l, data):
-    for i, v in enumerate(l):
+def expand_vars_in_list_recurse(lines, data):
+    for i, v in enumerate(lines):
         if isinstance(v, dict):
-            l[i] = expand_vars_in_dict_recurse(v, data)
+            lines[i] = expand_vars_in_dict_recurse(v, data)
         elif isinstance(v, str):
-            l[i] = v % data
+            lines[i] = v % data
         elif isinstance(v, list):
-            l[i] = expand_vars_in_list_recurse(v, data)
+            lines[i] = expand_vars_in_list_recurse(v, data)
 
-    return l
+    return lines
 
 
 def expand_vars_in_dict_recurse(dico, data):
@@ -192,18 +193,24 @@ class GstValidateSimpleTestsGenerator(GstValidateTestsGenerator):
         super().__init__(name, test_manager)
 
     def populate_tests(self, uri_minfo_special_scenarios, scenarios):
+        validatetests = []
         for root, _, files in os.walk(self.tests_dir):
             for f in files:
                 name, ext = os.path.splitext(f)
                 if ext != ".validatetest":
                     continue
 
-                fpath = os.path.abspath(os.path.join(root, f))
-                pathname = os.path.abspath(os.path.join(root, name))
-                name = pathname.replace(os.path.commonpath([self.tests_dir, root]), '').replace('/', '.')
-                self.add_test(GstValidateSimpleTest(fpath, 'test' + name,
-                                                    self.test_manager.options,
-                                                    self.test_manager.reporter))
+                validatetests.append(os.path.abspath(os.path.join(root, f)))
+
+        for validatetest in self.test_manager.scenarios_manager.discover_scenarios(validatetests):
+            pathname, _ext = os.path.splitext(validatetest.path)
+            name = pathname.replace(os.path.commonpath([self.tests_dir, root]), '').replace('/', '.')
+
+            self.add_test(GstValidateSimpleTest(validatetest.path,
+                                                'test' + name,
+                                                self.test_manager.options,
+                                                self.test_manager.reporter,
+                                                test_info=validatetest))
 
 
 class GstValidatePipelineTestsGenerator(GstValidateTestsGenerator):
@@ -679,14 +686,22 @@ class GstValidateMixerTestsGenerator(GstValidatePipelineTestsGenerator):
 
 
 class GstValidateSimpleTest(GstValidateTest):
-    def __init__(self, test_file, *args, **kwargs):
+    def __init__(self, test_file, *args, test_info=None, **kwargs):
         self.test_file = test_file
+        self.test_info = test_info
+
         super().__init__(GstValidateBaseTestManager.COMMAND, *args, **kwargs)
 
     def build_arguments(self):
         self.add_arguments('--set-test-file', self.test_file)
         if self.options.mute:
             self.add_arguments('--use-fakesinks')
+
+    def needs_http_server(self):
+        try:
+            return bool(self.test_info.needs_http_server)
+        except AttributeError:
+            return False
 
 
 class GstValidateLaunchTest(GstValidateTest):
@@ -805,7 +820,18 @@ class GstValidateTranscodingTest(GstValidateTest, GstValidateEncodingTestInterfa
         if urllib.parse.urlparse(self.dest_file).scheme == "":
             self.dest_file = path2url(self.dest_file)
 
-        profile = self.get_profile()
+        variable_framerate = VariableFramerateMode.DISABLED
+        if self.media_descriptor.get_num_tracks("video") == 1:
+            caps, = [c for (t, c) in self.media_descriptor.get_tracks_caps() if t == 'video']
+            framerate = None
+            for struct, _ in GstCaps.new_from_str(caps):
+                framerate = struct.get("framerate", None)
+                if framerate is not None and \
+                        framerate.numerator == 0 and framerate.denominator == 1:
+                    variable_framerate = VariableFramerateMode.AUTO
+                    break
+
+        profile = self.get_profile(variable_framerate=variable_framerate)
         self.add_arguments("-o", profile)
 
     def build_arguments(self):
@@ -1192,18 +1218,10 @@ not been tested and explicitly activated if you set use --wanted-tests ALL""")
 
     def needs_http_server(self):
         for test in self.list_tests():
-            if self._is_test_wanted(test) and test.media_descriptor is not None:
-                protocol = test.media_descriptor.get_protocol()
-                uri = test.media_descriptor.get_uri()
-                uri_requires_http_server = False
-                if uri:
-                    if 'http-server-port' in uri:
-                        expanded_uri = uri % {
-                            'http-server-port': self.options.http_server_port}
-                        uri_requires_http_server = expanded_uri.find(
-                            "127.0.0.1:%s" % self.options.http_server_port) != -1
-                if protocol in [Protocols.HTTP, Protocols.HLS, Protocols.DASH] or uri_requires_http_server:
+            if self._is_test_wanted(test):
+                if test.needs_http_server():
                     return True
+
         return False
 
     def set_settings(self, options, args, reporter):
@@ -1315,8 +1333,8 @@ not been tested and explicitly activated if you set use --wanted-tests ALL""")
              "matroskademux.gst_matroska_demux_handle_seek_push: Seek end-time not supported in streaming mode"),
 
             # MPEG TS known issues:
-            ('(?i)*playback.reverse_playback.*(?:_|.)(?:|m)ts$',
-             "https://gitlab.freedesktop.org/gstreamer/gst-plugins-bad/issues/97"),
+            ('*.playback.reverse_playback.*(?:_|.)(?:|m)ts$',
+             "https://gitlab.freedesktop.org/gstreamer/gst-plugins-bad/issues/97", '(?i)'),
 
             # Fragmented MP4 disabled tests:
             ('*.playback..*seek.*.fragmented_nonseekable_sink_mp4',
@@ -1333,7 +1351,7 @@ not been tested and explicitly activated if you set use --wanted-tests ALL""")
             # MXF known issues"
             ("*reverse_playback.*mxf",
              "Reverse playback is not handled in MXF"),
-            ("file\.transcode.*mxf",
+            (r'file\.transcode.*mxf',
              "FIXME: Transcoding and mixing tests need to be tested"),
 
             # WMV known issues"

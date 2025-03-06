@@ -217,6 +217,7 @@ enum
   SIGNAL_UNPREPARED,
   SIGNAL_TARGET_STATE,
   SIGNAL_NEW_STATE,
+  SIGNAL_HANDLE_MESSAGE,
   SIGNAL_LAST
 };
 
@@ -450,6 +451,23 @@ gst_rtsp_media_class_init (GstRTSPMediaClass * klass)
       g_signal_new ("new-state", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST,
       G_STRUCT_OFFSET (GstRTSPMediaClass, new_state), NULL, NULL, NULL,
       G_TYPE_NONE, 1, G_TYPE_INT);
+
+  /**
+   * GstRTSPMedia::handle-message:
+   * @media: a #GstRTSPMedia
+   * @message: a #GstMessage
+   *
+   * Will be emitted when a message appears on the pipeline bus.
+   *
+   * Returns: a #gboolean indicating if the call was successful or not.
+   *
+   * Since: 1.22
+   */
+  gst_rtsp_media_signals[SIGNAL_HANDLE_MESSAGE] =
+      g_signal_new ("handle-message", G_TYPE_FROM_CLASS (klass),
+      G_SIGNAL_RUN_LAST | G_SIGNAL_DETAILED, G_STRUCT_OFFSET (GstRTSPMediaClass,
+          handle_message), NULL, NULL, NULL, G_TYPE_BOOLEAN, 1,
+      GST_TYPE_MESSAGE);
 
   GST_DEBUG_CATEGORY_INIT (rtsp_media_debug, "rtspmedia", 0, "GstRTSPMedia");
 
@@ -2737,15 +2755,13 @@ gst_rtsp_media_get_rates (GstRTSPMedia * media, gdouble * rate,
           first_stream = FALSE;
         } else {
           if (save_rate != *rate || save_applied_rate != *applied_rate) {
-            /* diffrent rate or applied_rate, weird */
-            g_assert (FALSE);
+            /* different rate or applied_rate, weird */
             result = FALSE;
             break;
           }
         }
       } else {
-        /* complete stream withot rate and applied_rate, weird */
-        g_assert (FALSE);
+        /* complete stream without rate and applied_rate, weird */
         result = FALSE;
         break;
       }
@@ -3164,7 +3180,27 @@ set_target_state (GstRTSPMedia * media, GstState state, gboolean do_state)
 }
 
 static void
-stream_collect_active_sender (GstRTSPStream * stream, guint * active_streams)
+stream_collect_receiver_streams (GstRTSPStream * stream,
+    guint * receiver_streams)
+{
+  if (!gst_rtsp_stream_is_sender (stream))
+    (*receiver_streams)++;
+}
+
+static guint
+get_num_receiver_streams (GstRTSPMedia * media)
+{
+  guint ret = 0;
+
+  g_ptr_array_foreach (media->priv->streams,
+      (GFunc) stream_collect_receiver_streams, &ret);
+
+  return ret;
+}
+
+
+static void
+stream_collect_complete_sender (GstRTSPStream * stream, guint * active_streams)
 {
   if (gst_rtsp_stream_is_complete (stream)
       && gst_rtsp_stream_is_sender (stream))
@@ -3172,12 +3208,12 @@ stream_collect_active_sender (GstRTSPStream * stream, guint * active_streams)
 }
 
 static guint
-nbr_active_sender_streams (GstRTSPMedia * media)
+get_num_complete_sender_streams (GstRTSPMedia * media)
 {
   guint ret = 0;
 
   g_ptr_array_foreach (media->priv->streams,
-      (GFunc) stream_collect_active_sender, &ret);
+      (GFunc) stream_collect_complete_sender, &ret);
 
   return ret;
 }
@@ -3290,29 +3326,30 @@ default_handle_message (GstRTSPMedia * media, GstMessage * message)
       s = gst_message_get_structure (message);
       if (gst_structure_has_name (s, "GstRTSPStreamBlocking")) {
         gboolean is_complete = FALSE;
-        guint n_active_sender_streams;
-        guint expected_nbr_blocking_msg;
+        guint num_complete_sender_streams =
+            get_num_complete_sender_streams (media);
+        guint num_recv_streams = get_num_receiver_streams (media);
+        guint expected_num_blocking_msg;
 
         /* to prevent problems when some streams are complete, some are not,
          * we will ignore incomplete streams. When there are no complete
          * streams (during DESCRIBE), we will listen to all streams. */
 
         gst_structure_get_boolean (s, "is_complete", &is_complete);
-        n_active_sender_streams = nbr_active_sender_streams (media);
-        expected_nbr_blocking_msg = n_active_sender_streams;
+        expected_num_blocking_msg = num_complete_sender_streams;
         GST_DEBUG_OBJECT (media, "media received blocking message,"
-            " n_active_sender_streams = %d, is_complete = %d",
-            n_active_sender_streams, is_complete);
+            " num_complete_sender_streams = %d, is_complete = %d",
+            num_complete_sender_streams, is_complete);
 
-        if (n_active_sender_streams == 0 || is_complete)
+        if (num_complete_sender_streams == 0 || is_complete)
           priv->blocking_msg_received++;
 
-        if (n_active_sender_streams == 0)
-          expected_nbr_blocking_msg = priv->streams->len;
+        if (num_complete_sender_streams == 0)
+          expected_num_blocking_msg = priv->streams->len - num_recv_streams;
 
         if (priv->blocked && media_streams_blocking (media) &&
             priv->no_more_pads_pending == 0 &&
-            priv->blocking_msg_received == expected_nbr_blocking_msg) {
+            priv->blocking_msg_received == expected_num_blocking_msg) {
           GST_DEBUG_OBJECT (GST_MESSAGE_SRC (message), "media is blocking");
           g_mutex_lock (&priv->lock);
           collect_media_stats (media);
@@ -3360,19 +3397,20 @@ static gboolean
 bus_message (GstBus * bus, GstMessage * message, GstRTSPMedia * media)
 {
   GstRTSPMediaPrivate *priv = media->priv;
-  GstRTSPMediaClass *klass;
+  GQuark detail = 0;
   gboolean ret;
 
-  klass = GST_RTSP_MEDIA_GET_CLASS (media);
+  detail = gst_message_type_to_quark (GST_MESSAGE_TYPE (message));
 
   g_rec_mutex_lock (&priv->state_lock);
-  if (klass->handle_message)
-    ret = klass->handle_message (media, message);
-  else
-    ret = FALSE;
+  g_signal_emit (media, gst_rtsp_media_signals[SIGNAL_HANDLE_MESSAGE], detail,
+      message, &ret);
+  if (!ret) {
+    GST_DEBUG_OBJECT (media, "failed emitting pipeline message");
+  }
   g_rec_mutex_unlock (&priv->state_lock);
 
-  return ret;
+  return TRUE;
 }
 
 static void
@@ -4062,12 +4100,12 @@ default_unprepare (GstRTSPMedia * media)
   gst_rtsp_media_set_status (media, GST_RTSP_MEDIA_STATUS_UNPREPARING);
 
   if (priv->eos_shutdown) {
-    GST_DEBUG ("sending EOS for shutdown");
-    /* ref so that we don't disappear */
-    gst_element_send_event (priv->pipeline, gst_event_new_eos ());
     /* we need to go to playing again for the EOS to propagate, normally in this
      * state, nothing is receiving data from us anymore so this is ok. */
+    GST_DEBUG ("Temporarily go to PLAYING again for sending EOS");
     set_state (media, GST_STATE_PLAYING);
+    GST_DEBUG ("sending EOS for shutdown");
+    gst_element_send_event (priv->pipeline, gst_event_new_eos ());
   } else {
     finish_unprepare (media);
   }
@@ -4276,7 +4314,7 @@ not_prepared:
  * Get the #GstNetTimeProvider for the clock used by @media. The time provider
  * will listen on @address and @port for client time requests.
  *
- * Returns: (transfer full): the #GstNetTimeProvider of @media.
+ * Returns: (transfer full) (nullable): the #GstNetTimeProvider of @media.
  */
 GstNetTimeProvider *
 gst_rtsp_media_get_time_provider (GstRTSPMedia * media, const gchar * address,

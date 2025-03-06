@@ -76,7 +76,7 @@
 #include "config.h"
 #endif
 
-#include <gst/gst-i18n-plugin.h>
+#include <glib/gi18n-lib.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -1055,7 +1055,7 @@ gst_jack_audio_src_getcaps (GstBaseSrc * bsrc, GstCaps * filter)
     if (ports != NULL) {
       for (; ports[max]; max++);
 
-      free (ports);
+      jack_free (ports);
     } else
       max = 0;
   } else {

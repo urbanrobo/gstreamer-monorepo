@@ -46,7 +46,7 @@ static GList *peers;
 
 static SoupWebsocketConnection *ws_conn = NULL;
 static enum AppState app_state = 0;
-static const gchar *default_server_url = "wss://webrtc.nirbheek.in:8443";
+static const gchar *default_server_url = "wss://webrtc.gstreamer.net:8443";
 static gchar *server_url = NULL;
 static gchar *local_id = NULL;
 static gchar *room_id = NULL;
@@ -117,6 +117,44 @@ get_string_from_json_object (JsonObject * object)
   g_object_unref (generator);
   json_node_free (root);
   return text;
+}
+
+static gboolean
+bus_watch_cb (GstBus * bus, GstMessage * message, gpointer user_data)
+{
+  GstPipeline *pipeline = user_data;
+
+  switch (GST_MESSAGE_TYPE (message)) {
+    case GST_MESSAGE_ERROR:
+    {
+      GError *error = NULL;
+      gchar *debug = NULL;
+
+      gst_message_parse_error (message, &error, &debug);
+      g_error ("Error on bus: %s (debug: %s)", error->message, debug);
+      g_error_free (error);
+      g_free (debug);
+      break;
+    }
+    case GST_MESSAGE_WARNING:
+    {
+      GError *error = NULL;
+      gchar *debug = NULL;
+
+      gst_message_parse_warning (message, &error, &debug);
+      g_warning ("Warning on bus: %s (debug: %s)", error->message, debug);
+      g_error_free (error);
+      g_free (debug);
+      break;
+    }
+    case GST_MESSAGE_LATENCY:
+      gst_bin_recalculate_latency (GST_BIN (pipeline));
+      break;
+    default:
+      break;
+  }
+
+  return G_SOURCE_CONTINUE;
 }
 
 static void
@@ -282,6 +320,7 @@ on_offer_created (GstPromise * promise, const gchar * peer_id)
   /* Send offer to peer */
   send_room_peer_sdp (offer, peer_id);
   gst_webrtc_session_description_free (offer);
+  gst_object_unref (webrtc);
 }
 
 static void
@@ -307,6 +346,7 @@ remove_peer_from_pipeline (const gchar * peer_id)
     return;
 
   gst_bin_remove (GST_BIN (pipeline), webrtc);
+  gst_element_set_state (GST_ELEMENT (webrtc), GST_STATE_NULL);
   gst_object_unref (webrtc);
 
   qname = g_strdup_printf ("queue-%s", peer_id);
@@ -320,6 +360,7 @@ remove_peer_from_pipeline (const gchar * peer_id)
   gst_object_unref (sinkpad);
 
   gst_bin_remove (GST_BIN (pipeline), q);
+  gst_element_set_state (GST_ELEMENT (q), GST_STATE_NULL);
   gst_object_unref (q);
 
   tee = gst_bin_get_by_name (GST_BIN (pipeline), "audiotee");
@@ -410,6 +451,7 @@ start_pipeline (void)
 {
   GstStateChangeReturn ret;
   GError *error = NULL;
+  GstBus *bus = NULL;
 
   /* NOTE: webrtcbin currently does not support dynamic addition/removal of
    * streams, so we use a separate webrtcbin for each peer, but all of them are
@@ -424,6 +466,10 @@ start_pipeline (void)
     g_error_free (error);
     goto err;
   }
+
+  bus = gst_pipeline_get_bus (GST_PIPELINE (pipeline));
+  gst_bus_add_watch (bus, bus_watch_cb, pipeline);
+  gst_object_unref (bus);
 
   gst_print ("Starting pipeline, not transmitting yet\n");
   ret = gst_element_set_state (GST_ELEMENT (pipeline), GST_STATE_PLAYING);
@@ -606,6 +652,7 @@ on_answer_created (GstPromise * promise, const gchar * peer_id)
   /* Send offer to peer */
   send_room_peer_sdp (answer, peer_id);
   gst_webrtc_session_description_free (answer);
+  gst_object_unref (webrtc);
 
   app_state = ROOM_CALL_STARTED;
 }
@@ -926,6 +973,7 @@ int
 main (int argc, char *argv[])
 {
   GOptionContext *context;
+  GstBus *bus;
   GError *error = NULL;
 
   context = g_option_context_new ("- gstreamer webrtc sendrecv demo");
@@ -973,6 +1021,10 @@ main (int argc, char *argv[])
 
   gst_element_set_state (GST_ELEMENT (pipeline), GST_STATE_NULL);
   gst_print ("Pipeline stopped\n");
+
+  bus = gst_pipeline_get_bus (GST_PIPELINE (pipeline));
+  gst_bus_remove_watch (bus);
+  gst_object_unref (bus);
 
   gst_object_unref (pipeline);
   g_free (server_url);

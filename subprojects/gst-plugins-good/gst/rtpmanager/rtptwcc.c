@@ -22,6 +22,8 @@
 #include <gst/base/gstbitreader.h>
 #include <gst/base/gstbitwriter.h>
 
+#include "gstrtputils.h"
+
 GST_DEBUG_CATEGORY_EXTERN (rtp_session_debug);
 #define GST_CAT_DEFAULT rtp_session_debug
 
@@ -166,34 +168,11 @@ recv_packet_init (RecvPacket * packet, guint16 seqnum, RTPPacketInfo * pinfo)
     packet->ts = pinfo->current_time;
 }
 
-static guint8
-_get_extmap_id_for_attribute (const GstStructure * s, const gchar * ext_name)
-{
-  guint i;
-  guint8 extmap_id = 0;
-  guint n_fields = gst_structure_n_fields (s);
-
-  for (i = 0; i < n_fields; i++) {
-    const gchar *field_name = gst_structure_nth_field_name (s, i);
-    if (g_str_has_prefix (field_name, "extmap-")) {
-      const gchar *str = gst_structure_get_string (s, field_name);
-      if (str && g_strcmp0 (str, ext_name) == 0) {
-        gint64 id = g_ascii_strtoll (field_name + 7, NULL, 10);
-        if (id > 0 && id < 15) {
-          extmap_id = id;
-          break;
-        }
-      }
-    }
-  }
-  return extmap_id;
-}
-
 void
 rtp_twcc_manager_parse_recv_ext_id (RTPTWCCManager * twcc,
     const GstStructure * s)
 {
-  guint8 recv_ext_id = _get_extmap_id_for_attribute (s, TWCC_EXTMAP_STR);
+  guint8 recv_ext_id = gst_rtp_get_extmap_id_for_attribute (s, TWCC_EXTMAP_STR);
   if (recv_ext_id > 0) {
     twcc->recv_ext_id = recv_ext_id;
     GST_INFO ("TWCC enabled for recv using extension id: %u",
@@ -205,7 +184,7 @@ void
 rtp_twcc_manager_parse_send_ext_id (RTPTWCCManager * twcc,
     const GstStructure * s)
 {
-  guint8 send_ext_id = _get_extmap_id_for_attribute (s, TWCC_EXTMAP_STR);
+  guint8 send_ext_id = gst_rtp_get_extmap_id_for_attribute (s, TWCC_EXTMAP_STR);
   if (send_ext_id > 0) {
     twcc->send_ext_id = send_ext_id;
     GST_INFO ("TWCC enabled for send using extension id: %u",
@@ -253,32 +232,17 @@ _get_twcc_seqnum_data (RTPPacketInfo * pinfo, guint8 ext_id, gpointer * data)
   return ret;
 }
 
-static gboolean
+static void
 sent_packet_init (SentPacket * packet, guint16 seqnum, RTPPacketInfo * pinfo,
-    GstBuffer * buffer)
+    GstRTPBuffer * rtp)
 {
-  GstRTPBuffer rtp = { NULL };
-
-  if (!gst_rtp_buffer_map (buffer, GST_MAP_READ, &rtp))
-    goto invalid_packet;
-
   packet->seqnum = seqnum;
   packet->ts = pinfo->current_time;
-  packet->size = gst_rtp_buffer_get_payload_len (&rtp);
-  packet->pt = gst_rtp_buffer_get_payload_type (&rtp);
+  packet->size = gst_rtp_buffer_get_payload_len (rtp);
+  packet->pt = gst_rtp_buffer_get_payload_type (rtp);
   packet->remote_ts = GST_CLOCK_TIME_NONE;
   packet->socket_ts = GST_CLOCK_TIME_NONE;
   packet->lost = FALSE;
-
-  gst_rtp_buffer_unmap (&rtp);
-
-  return TRUE;
-
-invalid_packet:
-  {
-    GST_DEBUG ("invalid RTP packet received");
-    return FALSE;
-  }
 }
 
 static void
@@ -295,11 +259,11 @@ _set_twcc_seqnum_data (RTPTWCCManager * twcc, RTPPacketInfo * pinfo,
       guint16 seqnum = twcc->send_seqnum++;
 
       GST_WRITE_UINT16_BE (data, seqnum);
-      sent_packet_init (&packet, seqnum, pinfo, buf);
+      sent_packet_init (&packet, seqnum, pinfo, &rtp);
       g_array_append_val (twcc->sent_packets, packet);
 
       GST_LOG ("Send: twcc-seqnum: %u, pt: %u, marker: %d, len: %u, ts: %"
-          GST_TIME_FORMAT, seqnum, pinfo->pt, pinfo->marker, packet.size,
+          GST_TIME_FORMAT, seqnum, packet.pt, pinfo->marker, packet.size,
           GST_TIME_ARGS (pinfo->current_time));
     }
     gst_rtp_buffer_unmap (&rtp);
@@ -336,8 +300,10 @@ rtp_twcc_manager_get_recv_twcc_seqnum (RTPTWCCManager * twcc,
   gint32 val = -1;
   gpointer data;
 
-  if (twcc->recv_ext_id == 0)
+  if (twcc->recv_ext_id == 0) {
+    GST_DEBUG ("Received TWCC packet, but no extension registered; ignoring");
     return val;
+  }
 
   if (_get_twcc_seqnum_data (pinfo, twcc->recv_ext_id, &data)) {
     val = GST_READ_UINT16_BE (data);
@@ -632,6 +598,20 @@ rtp_twcc_manager_add_fci (RTPTWCCManager * twcc, GstRTCPPacket * packet)
 
   g_array_sort (twcc->recv_packets, _twcc_seqnum_sort);
 
+  /* Quick scan to remove duplicates */
+  prev = &g_array_index (twcc->recv_packets, RecvPacket, 0);
+  for (i = 1; i < twcc->recv_packets->len;) {
+    RecvPacket *cur = &g_array_index (twcc->recv_packets, RecvPacket, i);
+
+    if (prev->seqnum == cur->seqnum) {
+      GST_DEBUG ("Removing duplicate packet #%u", cur->seqnum);
+      g_array_remove_index (twcc->recv_packets, i);
+    } else {
+      prev = cur;
+      i += 1;
+    }
+  }
+
   /* get first and last packet */
   first = &g_array_index (twcc->recv_packets, RecvPacket, 0);
   last =
@@ -774,6 +754,11 @@ _many_packets_some_lost (RTPTWCCManager * twcc, guint16 seqnum)
   first = &g_array_index (twcc->recv_packets, RecvPacket, 0);
   packet_count = seqnum - first->seqnum + 1;
 
+  /* If there are a high number of duplicates, we can't use the following
+   * metrics */
+  if (received_packets > packet_count)
+    return FALSE;
+
   /* check if we lost half of the threshold */
   lost_packets = packet_count - received_packets;
   if (received_packets >= 30 && lost_packets >= 60)
@@ -821,17 +806,6 @@ rtp_twcc_manager_recv_packet (RTPTWCCManager * twcc, RTPPacketInfo * pinfo)
     return FALSE;
   }
 
-  if (twcc->recv_packets->len > 0) {
-    RecvPacket *last = &g_array_index (twcc->recv_packets, RecvPacket,
-        twcc->recv_packets->len - 1);
-
-    diff = gst_rtp_buffer_compare_seqnum (last->seqnum, seqnum);
-    if (diff == 0) {
-      GST_INFO ("Received duplicate packet (%u), dropping", seqnum);
-      return FALSE;
-    }
-  }
-
   /* store the packet for Transport-wide RTCP feedback message */
   recv_packet_init (&packet, seqnum, pinfo);
   g_array_append_val (twcc->recv_packets, packet);
@@ -851,6 +825,8 @@ rtp_twcc_manager_recv_packet (RTPTWCCManager * twcc, RTPPacketInfo * pinfo)
           pinfo->running_time + twcc->feedback_interval;
 
     if (pinfo->running_time >= twcc->next_feedback_send_time) {
+      GST_LOG ("Generating feedback : Exceeded feedback interval %"
+          GST_TIME_FORMAT, GST_TIME_ARGS (twcc->feedback_interval));
       rtp_twcc_manager_create_feedback (twcc);
       send_feedback = TRUE;
 
@@ -858,6 +834,8 @@ rtp_twcc_manager_recv_packet (RTPTWCCManager * twcc, RTPPacketInfo * pinfo)
         twcc->next_feedback_send_time += twcc->feedback_interval;
     }
   } else if (pinfo->marker || _many_packets_some_lost (twcc, seqnum)) {
+    GST_LOG ("Generating feedback because of %s",
+        pinfo->marker ? "marker packet" : "many packets some lost");
     rtp_twcc_manager_create_feedback (twcc);
     send_feedback = TRUE;
 

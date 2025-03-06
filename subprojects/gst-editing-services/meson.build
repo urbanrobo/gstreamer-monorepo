@@ -1,6 +1,6 @@
 project('gst-editing-services', 'c',
-  version : '1.21.0.1',
-  meson_version : '>= 0.59',
+  version : '1.22.12.1',
+  meson_version : '>= 0.62',
   default_options : [ 'warning_level=1',
                       'buildtype=debugoptimized' ])
 
@@ -27,7 +27,7 @@ curversion = gst_version_minor * 100 + gst_version_micro
 libversion = '@0@.@1@.0'.format(soversion, curversion)
 osxversion = curversion + 1
 
-glib_req = '>= 2.56.0'
+glib_req = '>= 2.62.0'
 
 if gst_version_is_stable
   gst_req = '>= @0@.@1@.0'.format(gst_version_major, gst_version_minor)
@@ -67,18 +67,16 @@ if cc.has_link_argument('-Wl,-Bsymbolic-functions')
   add_project_link_arguments('-Wl,-Bsymbolic-functions', language : 'c')
 endif
 
-# Symbol visibility
-if cc.get_id() == 'msvc'
-  export_define = '__declspec(dllexport) extern'
-elif cc.has_argument('-fvisibility=hidden')
-  add_project_arguments('-fvisibility=hidden', language: 'c')
-  export_define = 'extern __attribute__ ((visibility ("default")))'
-else
-  export_define = 'extern'
+# glib doesn't support unloading, which means that unloading and reloading
+# any library that registers static types will fail
+if cc.has_link_argument('-Wl,-z,nodelete')
+  add_project_link_arguments('-Wl,-z,nodelete', language: 'c')
 endif
 
-# Passing this through the command line would be too messy
-cdata.set('GST_API_EXPORT', export_define)
+# Symbol visibility
+if cc.has_argument('-fvisibility=hidden')
+  add_project_arguments('-fvisibility=hidden', language: 'c')
+endif
 
 # Disable strict aliasing
 if cc.has_argument('-fno-strict-aliasing')
@@ -88,7 +86,7 @@ endif
 cdata.set('VERSION', '"@0@"'.format(gst_version))
 cdata.set('PACKAGE', '"gst-editing-services"')
 cdata.set('PACKAGE_VERSION', '"@0@"'.format(gst_version))
-cdata.set('PACKAGE_BUGREPORT', '"https://gitlab.freedesktop.org/gstreamer/gst-editing-services/issues/new"')
+cdata.set('PACKAGE_BUGREPORT', '"https://gitlab.freedesktop.org/gstreamer/gstreamer/issues/new"')
 cdata.set('PACKAGE_NAME', '"GStreamer Editing Services"')
 cdata.set('GST_PACKAGE_NAME', '"GStreamer Editing Services"')
 cdata.set('GST_PACKAGE_ORIGIN', '"Unknown package origin"')
@@ -112,10 +110,11 @@ if host_machine.system() != 'windows'
 endif
 gstcontroller_dep = dependency('gstreamer-controller-1.0', version : gst_req,
   fallback : ['gstreamer', 'gst_controller_dep'])
-gstvalidate_dep = dependency('gst-validate-1.0', version : gst_req, required : get_option('validate'),
+gstvalidate_dep = dependency('gstreamer-validate-1.0', version : gst_req, required : get_option('validate'),
   fallback : ['gst-devtools', 'validate_dep'])
 
-gio_dep = dependency('gio-2.0', version: glib_req, fallback: ['glib', 'libgio_dep'])
+gio_dep = dependency('gio-2.0', version: glib_req)
+gmodule_dep = dependency('gmodule-no-export-2.0')
 libxml_dep = dependency('libxml-2.0', required: get_option('xptv'))
 cdata.set('DISABLE_XPTV', not libxml_dep.found())
 
@@ -159,9 +158,11 @@ elif build_gir
   if python.found()
     # Workaround for https://github.com/mesonbuild/meson/issues/5629
     pythonver = python.language_version()
-    python_dep = dependency('python-@0@-embed'.format(pythonver), version: '>=3', required: false)
+    python_dep = dependency('python-@0@-embed'.format(pythonver), version: '>=3',
+                            required: false, include_type: 'system')
     if not python_dep.found()
-      python_dep = python.dependency(required : get_option('python'))
+      python_dep = python.dependency(required : get_option('python'),
+                                     include_type: 'system')
     endif
   else
     python_dep = dependency('', required: false)
@@ -196,7 +197,6 @@ elif build_gir
           pylib_suffix = 'dylib'
         endif
 
-        gmodule_dep = dependency('gmodule-2.0')
         libges_deps = libges_deps + [python_dep, gmodule_dep]
         has_python = true
         message('python_abi_flags = @0@'.format(python_abi_flags))
@@ -251,7 +251,6 @@ warning_flags = [
   '-Wmissing-include-dirs',
   '-Waddress',
   '-Wno-multichar',
-  '-Wdeclaration-after-statement',
   '-Wvla',
   '-Wpointer-arith',
 ]
@@ -267,61 +266,27 @@ pkgconfig = import('pkgconfig')
 pkgconfig_subdirs = ['gstreamer-1.0']
 
 configinc = include_directories('.')
-libraries = []
+gst_libraries = []
 
 subdir('ges')
 subdir('plugins')
-if not get_option('tools').disabled()
-  subdir('tools')
-endif
+subdir('tools')
+
 subdir('tests')
 if not get_option('examples').disabled()
   subdir('examples')
 endif
 subdir('docs')
 
-override_detector = '''
-import sys
-import os
-
-prefix = sys.argv[1]
-version = sys.version_info
-
-# If we are installing in the same prefix as PyGobject
-# make sure to install in the right place.
-import gi.overrides
-
-overrides_path = os.path.dirname(gi.overrides.__file__)
-if os.path.commonprefix([overrides_path, prefix]) == prefix:
-    print(overrides_path)
-    exit(0)
-
-# Otherwise follow python's way of install site packages inside
-# the provided prefix
-if os.name == 'posix':
-    print(os.path.join(
-        prefix, 'lib', 'python%d.%d' % (version.major, version.minor),
-        'site-packages', 'gi', 'overrides'))
-else:
-    print(os.path.join(
-        prefix, 'Lib', 'Python%d%d' % (version.major, version.minor),
-        'site-packages', 'gi', 'overrides'))
-'''
 pygi_override_dir = get_option('pygi-overrides-dir')
 if pygi_override_dir == ''
-    cres = run_command(python3, '-c', override_detector, get_option('prefix'), check: false)
-    if cres.returncode() == 0
-      pygi_override_dir = cres.stdout().strip()
-    endif
-    if cres.stderr() != ''
-        message(cres.stderr())
-    endif
+  pygi_override_dir = python3.get_install_dir(
+    subdir : join_paths('gi', 'overrides')
+  )
 endif
 
-if pygi_override_dir != ''
-  message('pygobject overrides directory ' + pygi_override_dir)
-  subdir('bindings/python')
-endif
+message('pygobject overrides directory = @0@'.format(pygi_override_dir))
+subdir('bindings/python')
 
 # Set release date
 if gst_version_nano == 0
@@ -338,8 +303,15 @@ endif
 
 configure_file(output: 'config.h', configuration: cdata)
 
+meson.add_dist_script('scripts/gen-changelog.py', meson.project_name(), '1.20.0', meson.project_version())
+
 plugin_names = []
+gst_plugins = []
 foreach plugin: plugins
+  pkgconfig.generate(plugin, install_dir: plugins_pkgconfig_install_dir)
+  dep = declare_dependency(link_with: plugin, variables: {'full_path': plugin.full_path()})
+  meson.override_dependency(plugin.name(), dep)
+  gst_plugins += [dep]
   if plugin.name().startswith('gst')
     plugin_names += [plugin.name().substring(3)]
   else

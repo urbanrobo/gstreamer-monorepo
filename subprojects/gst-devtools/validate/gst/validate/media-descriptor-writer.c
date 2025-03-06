@@ -18,10 +18,15 @@
  * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
  * Boston, MA 02110-1301, USA.
  */
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
 
 #include <gst/validate/validate.h>
 #include "media-descriptor-writer.h"
 #include <string.h>
+
+#include "gst-validate-internal.h"
 
 struct _GstValidateMediaDescriptorWriterPrivate
 {
@@ -123,7 +128,9 @@ serialize_filenode (GstValidateMediaDescriptorWriter * writer)
   GList *tmp, *tmp2;
   GstValidateMediaTagsNode *tagsnode;
   GstValidateMediaFileNode
-      * filenode = ((GstValidateMediaDescriptor *) writer)->filenode;
+      * filenode =
+      gst_validate_media_descriptor_get_file_node ((GstValidateMediaDescriptor
+          *) writer);
 
   tmpstr = g_markup_printf_escaped ("<file duration=\"%" G_GUINT64_FORMAT
       "\" frame-detection=\"%i\" skip-parsers=\"%i\" uri=\"%s\" seekable=\"%s\">\n",
@@ -195,9 +202,10 @@ static
 {
   GList *tmp;
 
-  for (tmp = md->filenode->streams; tmp; tmp = tmp->next) {
-    GstValidateMediaStreamNode
-        * streamnode = (GstValidateMediaStreamNode *) tmp->data;
+  for (tmp = gst_validate_media_descriptor_get_file_node (md)->streams; tmp;
+      tmp = tmp->next) {
+    GstValidateMediaStreamNode *streamnode =
+        (GstValidateMediaStreamNode *) tmp->data;
 
     if (streamnode->pad == pad) {
       return streamnode;
@@ -219,7 +227,9 @@ gst_validate_media_descriptor_writer_new (GstValidateRunner * runner,
       g_object_new (GST_TYPE_VALIDATE_MEDIA_DESCRIPTOR_WRITER,
       "validate-runner", runner, NULL);
 
-  fnode = ((GstValidateMediaDescriptor *) writer)->filenode;
+  fnode =
+      gst_validate_media_descriptor_get_file_node ((GstValidateMediaDescriptor
+          *) writer);
   fnode->uri = g_strdup (uri);
   fnode->duration = duration;
   fnode->seekable = seekable;
@@ -269,8 +279,8 @@ static gboolean
 
   g_return_val_if_fail (GST_IS_VALIDATE_MEDIA_DESCRIPTOR_WRITER (writer),
       FALSE);
-  g_return_val_if_fail (((GstValidateMediaDescriptor *) writer)->filenode,
-      FALSE);
+  g_return_val_if_fail (gst_validate_media_descriptor_get_file_node (
+          (GstValidateMediaDescriptor *) writer), FALSE);
 
   snode = g_slice_new0 (GstValidateMediaStreamNode);
   snode->frames = NULL;
@@ -312,9 +322,10 @@ static gboolean
 
   snode->str_close = g_markup_printf_escaped ("</stream>");
 
-  ((GstValidateMediaDescriptor *) writer)->filenode->streams =
-      g_list_prepend (((GstValidateMediaDescriptor *) writer)->
-      filenode->streams, snode);
+  gst_validate_media_descriptor_get_file_node ((GstValidateMediaDescriptor *)
+      writer)->streams =
+      g_list_prepend (gst_validate_media_descriptor_get_file_node (
+          (GstValidateMediaDescriptor *) writer)->streams, snode);
 
   if (gst_discoverer_stream_info_get_tags (info)) {
     gst_validate_media_descriptor_writer_add_tags (writer, snode->id,
@@ -396,8 +407,9 @@ _find_stream_id (GstPad * pad, GstEvent ** event,
     const gchar *stream_id;
 
     gst_event_parse_stream_start (*event, &stream_id);
-    for (tmp = ((GstValidateMediaDescriptor *) writer)->filenode->streams; tmp;
-        tmp = tmp->next) {
+    for (tmp =
+        gst_validate_media_descriptor_get_file_node ((GstValidateMediaDescriptor
+                *) writer)->streams; tmp; tmp = tmp->next) {
       GstValidateMediaStreamNode *subnode =
           (GstValidateMediaStreamNode *) tmp->data;
       if (g_strcmp0 (subnode->id, stream_id) == 0) {
@@ -612,7 +624,9 @@ _run_frame_analysis (GstValidateMediaDescriptorWriter * writer,
 
   g_main_loop_run (writer->priv->loop);
 
-  filenode = ((GstValidateMediaDescriptor *) writer)->filenode;
+  filenode =
+      gst_validate_media_descriptor_get_file_node ((GstValidateMediaDescriptor
+          *) writer);
   /* Segment are always prepended, let's reorder them. */
   for (tmp = filenode->streams; tmp; tmp = tmp->next) {
     GstValidateMediaStreamNode
@@ -712,7 +726,8 @@ gst_validate_media_descriptor_writer_new_discover (GstValidateRunner * runner,
       gst_validate_media_descriptor_writer_add_taglist (writer, tags);
 
     if (GST_IS_DISCOVERER_CONTAINER_INFO (streaminfo)) {
-      ((GstValidateMediaDescriptor *) writer)->filenode->caps =
+      gst_validate_media_descriptor_get_file_node ((GstValidateMediaDescriptor
+              *) writer)->caps =
           gst_discoverer_stream_info_get_caps (GST_DISCOVERER_STREAM_INFO
           (streaminfo));
 
@@ -723,16 +738,25 @@ gst_validate_media_descriptor_writer_new_discover (GstValidateRunner * runner,
         gst_validate_media_descriptor_writer_add_stream (writer, streaminfo);
       }
     } else {
+      GstDiscovererStreamInfo *nextinfo;
       if (!GST_IS_DISCOVERER_AUDIO_INFO (info)
-          && !GST_IS_DISCOVERER_AUDIO_INFO (info)
-          && gst_discoverer_stream_info_get_next (streaminfo)) {
-        ((GstValidateMediaDescriptor *) writer)->filenode->caps =
-            gst_discoverer_stream_info_get_caps (streaminfo);
-        streaminfo = gst_discoverer_stream_info_get_next (streaminfo);
+          && !GST_IS_DISCOVERER_VIDEO_INFO (info)) {
+        nextinfo = gst_discoverer_stream_info_get_next (streaminfo);
+        if (nextinfo) {
+          GstValidateMediaFileNode *fn =
+              gst_validate_media_descriptor_get_file_node (
+              (GstValidateMediaDescriptor *) writer);
+          fn->caps = gst_discoverer_stream_info_get_caps (streaminfo);
+          gst_discoverer_stream_info_unref (streaminfo);
+          streaminfo = nextinfo;
+        }
       }
       do {
         gst_validate_media_descriptor_writer_add_stream (writer, streaminfo);
-      } while ((streaminfo = gst_discoverer_stream_info_get_next (streaminfo)));
+        nextinfo = gst_discoverer_stream_info_get_next (streaminfo);
+        gst_discoverer_stream_info_unref (streaminfo);
+        streaminfo = nextinfo;
+      } while (streaminfo);
     }
   } else {
     GST_VALIDATE_REPORT (writer, FILE_NO_STREAM_INFO,
@@ -741,8 +765,11 @@ gst_validate_media_descriptor_writer_new_discover (GstValidateRunner * runner,
   }
 
   media_descriptor = (GstValidateMediaDescriptor *) writer;
-  if (streams == NULL && media_descriptor->filenode->caps)
-    writer->priv->raw_caps = gst_caps_copy (media_descriptor->filenode->caps);
+  if (streams == NULL
+      && gst_validate_media_descriptor_get_file_node (media_descriptor)->caps)
+    writer->priv->raw_caps =
+        gst_caps_copy (gst_validate_media_descriptor_get_file_node
+        (media_descriptor)->caps);
 
   gst_discoverer_stream_info_list_free (streams);
 
@@ -772,11 +799,12 @@ gst_validate_media_descriptor_writer_add_tags (GstValidateMediaDescriptorWriter
 
   g_return_val_if_fail (GST_IS_VALIDATE_MEDIA_DESCRIPTOR_WRITER (writer),
       FALSE);
-  g_return_val_if_fail (((GstValidateMediaDescriptor *) writer)->filenode,
-      FALSE);
+  g_return_val_if_fail (gst_validate_media_descriptor_get_file_node (
+          (GstValidateMediaDescriptor *) writer), FALSE);
 
-  for (tmp = ((GstValidateMediaDescriptor *) writer)->filenode->streams; tmp;
-      tmp = tmp->next) {
+  for (tmp =
+      gst_validate_media_descriptor_get_file_node ((GstValidateMediaDescriptor
+              *) writer)->streams; tmp; tmp = tmp->next) {
     GstValidateMediaStreamNode *subnode =
         (GstValidateMediaStreamNode *) tmp->data;
     if (g_strcmp0 (subnode->id, stream_id) == 0) {
@@ -834,14 +862,15 @@ gst_validate_media_descriptor_writer_add_pad (GstValidateMediaDescriptorWriter *
 
   g_return_val_if_fail (GST_IS_VALIDATE_MEDIA_DESCRIPTOR_WRITER (writer),
       FALSE);
-  g_return_val_if_fail (((GstValidateMediaDescriptor *) writer)->filenode,
-      FALSE);
+  g_return_val_if_fail (gst_validate_media_descriptor_get_file_node (
+          (GstValidateMediaDescriptor *) writer), FALSE);
 
   caps = gst_pad_get_current_caps (pad);
-  for (tmp = ((GstValidateMediaDescriptor *) writer)->filenode->streams; tmp;
-      tmp = tmp->next) {
-    GstValidateMediaStreamNode
-        * streamnode = (GstValidateMediaStreamNode *) tmp->data;
+  for (tmp =
+      gst_validate_media_descriptor_get_file_node ((GstValidateMediaDescriptor
+              *) writer)->streams; tmp; tmp = tmp->next) {
+    GstValidateMediaStreamNode *streamnode =
+        (GstValidateMediaStreamNode *) tmp->data;
 
     if (streamnode->pad == pad) {
       goto done;
@@ -863,9 +892,10 @@ gst_validate_media_descriptor_writer_add_pad (GstValidateMediaDescriptorWriter *
 
   snode->str_close = g_markup_printf_escaped ("</stream>");
 
-  ((GstValidateMediaDescriptor *) writer)->filenode->streams =
-      g_list_prepend (((GstValidateMediaDescriptor *) writer)->
-      filenode->streams, snode);
+  gst_validate_media_descriptor_get_file_node ((GstValidateMediaDescriptor *)
+      writer)->streams =
+      g_list_prepend (gst_validate_media_descriptor_get_file_node (
+          (GstValidateMediaDescriptor *) writer)->streams, snode);
 
 done:
   if (caps != NULL)
@@ -886,16 +916,20 @@ gboolean
 
   g_return_val_if_fail (GST_IS_VALIDATE_MEDIA_DESCRIPTOR_WRITER (writer),
       FALSE);
-  g_return_val_if_fail (((GstValidateMediaDescriptor *) writer)->filenode,
-      FALSE);
+  g_return_val_if_fail (gst_validate_media_descriptor_get_file_node (
+          (GstValidateMediaDescriptor *) writer), FALSE);
 
-  if (((GstValidateMediaDescriptor *) writer)->filenode->tags == NULL) {
+  if (gst_validate_media_descriptor_get_file_node ((GstValidateMediaDescriptor
+              *) writer)->tags == NULL) {
     tagsnode = g_slice_new0 (GstValidateMediaTagsNode);
     tagsnode->str_open = g_markup_printf_escaped ("<tags>");
     tagsnode->str_close = g_markup_printf_escaped ("</tags>");
-    ((GstValidateMediaDescriptor *) writer)->filenode->tags = tagsnode;
+    gst_validate_media_descriptor_get_file_node ((GstValidateMediaDescriptor *)
+        writer)->tags = tagsnode;
   } else {
-    tagsnode = ((GstValidateMediaDescriptor *) writer)->filenode->tags;
+    tagsnode =
+        gst_validate_media_descriptor_get_file_node ((GstValidateMediaDescriptor
+            *) writer)->tags;
     for (tmptag = tagsnode->tags; tmptag; tmptag = tmptag->next) {
       if (gst_validate_tag_node_compare ((GstValidateMediaTagNode *)
               tmptag->data, taglist)) {
@@ -932,10 +966,12 @@ gst_validate_media_descriptor_writer_add_frame (GstValidateMediaDescriptorWriter
 
   g_return_val_if_fail (GST_IS_VALIDATE_MEDIA_DESCRIPTOR_WRITER (writer),
       FALSE);
-  g_return_val_if_fail (((GstValidateMediaDescriptor *) writer)->filenode,
-      FALSE);
+  g_return_val_if_fail (gst_validate_media_descriptor_get_file_node (
+          (GstValidateMediaDescriptor *) writer), FALSE);
 
-  filenode = ((GstValidateMediaDescriptor *) writer)->filenode;
+  filenode =
+      gst_validate_media_descriptor_get_file_node ((GstValidateMediaDescriptor
+          *) writer);
   filenode->frame_detection = TRUE;
   filenode->skip_parsers =
       FLAG_IS_SET (writer,
@@ -1002,8 +1038,8 @@ gst_validate_media_descriptor_writer_write (GstValidateMediaDescriptorWriter *
 
   g_return_val_if_fail (GST_IS_VALIDATE_MEDIA_DESCRIPTOR_WRITER (writer),
       FALSE);
-  g_return_val_if_fail (((GstValidateMediaDescriptor *) writer)->filenode,
-      FALSE);
+  g_return_val_if_fail (gst_validate_media_descriptor_get_file_node (
+          (GstValidateMediaDescriptor *) writer), FALSE);
 
   serialized = serialize_filenode (writer);
 
@@ -1023,8 +1059,8 @@ gst_validate_media_descriptor_writer_serialize (GstValidateMediaDescriptorWriter
 {
   g_return_val_if_fail (GST_IS_VALIDATE_MEDIA_DESCRIPTOR_WRITER (writer),
       FALSE);
-  g_return_val_if_fail (((GstValidateMediaDescriptor *) writer)->filenode,
-      FALSE);
+  g_return_val_if_fail (gst_validate_media_descriptor_get_file_node (
+          (GstValidateMediaDescriptor *) writer), FALSE);
 
   return serialize_filenode (writer);
 }

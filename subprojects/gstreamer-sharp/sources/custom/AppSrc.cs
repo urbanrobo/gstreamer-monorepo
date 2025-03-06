@@ -25,11 +25,9 @@ namespace Gst.App {
 	using System;
 	using System.Runtime.InteropServices;
 
-	partial class AppSrc 
-	{
-		public AppSrc (String name) {
-			var element = ElementFactory.Make ("appsrc", name);
-			Raw = element.Handle;
+	partial class AppSrc {
+		public AppSrc(String name) : base(IntPtr.Zero) {
+			Raw = ElementFactory.MakeRaw("appsrc", name);
 		}
 	}
 }

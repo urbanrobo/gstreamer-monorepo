@@ -1085,6 +1085,8 @@ gst_rtp_h264_pay_payload_nal_fragment (GstRTPBasePayload * basepayload,
     /* If it's the last fragment and the end of this au, mark the end of
      * slice */
     gst_rtp_buffer_set_marker (&rtp, last_fragment && end_of_au);
+    if (last_fragment && end_of_au)
+      GST_BUFFER_FLAG_SET (outbuf, GST_BUFFER_FLAG_MARKER);
 
     /* FU indicator */
     payload[0] = (nal_header & 0x60) | FU_A_TYPE_ID;
@@ -1142,6 +1144,8 @@ gst_rtp_h264_pay_payload_nal_single (GstRTPBasePayload * basepayload,
 
   /* Mark the end of a frame */
   gst_rtp_buffer_set_marker (&rtp, end_of_au);
+  if (end_of_au)
+    GST_BUFFER_FLAG_SET (outbuf, GST_BUFFER_FLAG_MARKER);
 
   /* timestamp the outbuffer */
   GST_BUFFER_PTS (outbuf) = pts;
@@ -1250,7 +1254,7 @@ gst_rtp_h264_pay_send_bundle (GstRtpH264Pay * rtph264pay, gboolean end_of_au)
       end_of_au, delta, discont);
 }
 
-static gboolean
+static GstFlowReturn
 gst_rtp_h264_pay_payload_nal_bundle (GstRTPBasePayload * basepayload,
     GstBuffer * paybuf, GstClockTime dts, GstClockTime pts, gboolean end_of_au,
     gboolean delta_unit, gboolean discont, guint8 nal_header)

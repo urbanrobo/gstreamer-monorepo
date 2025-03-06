@@ -98,7 +98,7 @@ vulkan_conf_options = [
 ]
 
 foreach option : vulkan_conf_options
-  vulkan_conf.set10(option, false)
+  vulkan_conf.set(option, 0)
 endforeach
 
 if ['ios', 'darwin'].contains(host_system)
@@ -168,17 +168,37 @@ if xcb_dep.found() and xkbcommon_dep.found() and xkbcommon_x11_dep.found() and c
 
   optional_deps += [xcb_dep, xkbcommon_dep, xkbcommon_x11_dep]
   vulkan_windowing = true
-  vulkan_conf.set10('GST_VULKAN_HAVE_WINDOW_XCB', 1)
+  vulkan_conf.set('GST_VULKAN_HAVE_WINDOW_XCB', 1)
   enabled_vulkan_winsys += ['xcb']
 endif
 
 wayland_client_dep = dependency('wayland-client', version : '>=1.4', required : get_option('wayland'))
-if wayland_client_dep.found() and cc.has_header('vulkan/vulkan_wayland.h', dependencies : vulkan_dep)
+wayland_protocols_dep = dependency('wayland-protocols', version : '>= 1.15', required : get_option('wayland'))
+wayland_scanner = find_program('wayland-scanner', required: get_option('wayland'))
+if wayland_client_dep.found() and wayland_protocols_dep.found() and wayland_scanner.found() and cc.has_header('vulkan/vulkan_wayland.h', dependencies : vulkan_dep)
+  # Generate the XDG shell interface
+  wayland_protocols_basedir = wayland_protocols_dep.get_variable('pkgdatadir')
+  xdg_shell_xml_spec = join_paths(wayland_protocols_basedir, 'stable', 'xdg-shell', 'xdg-shell.xml')
+  xdg_shell_header = custom_target('xdg-shell-client-header',
+    command: [ wayland_scanner, 'client-header', '@INPUT@', '@OUTPUT@' ],
+    input: xdg_shell_xml_spec,
+    output: 'xdg-shell-client-protocol.h',
+  )
+  xdg_shell_code = custom_target('xdg-shell-client-code',
+    command: [ wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@' ],
+    input: xdg_shell_xml_spec,
+    output: 'xdg-shell-client-protocol.c',
+  )
+
   vulkan_priv_sources += files(
     'wayland/gstvkdisplay_wayland.c',
     'wayland/gstvkwindow_wayland.c',
     'wayland/wayland_event_source.c',
   )
+  vulkan_priv_sources += [
+    xdg_shell_header,
+    xdg_shell_code,
+  ]
   vulkan_wayland_sources += files(
     'wayland/gstvkdisplay_wayland.c',
   )
@@ -189,7 +209,7 @@ if wayland_client_dep.found() and cc.has_header('vulkan/vulkan_wayland.h', depen
 
   optional_deps += wayland_client_dep
   vulkan_windowing = true
-  vulkan_conf.set10('GST_VULKAN_HAVE_WINDOW_WAYLAND', 1)
+  vulkan_conf.set('GST_VULKAN_HAVE_WINDOW_WAYLAND', 1)
   enabled_vulkan_winsys += ['wayland']
 endif
 
@@ -219,7 +239,7 @@ if host_system == 'darwin'
     )
     optional_deps += [cocoa_dep]
     vulkan_windowing = true
-    vulkan_conf.set10('GST_VULKAN_HAVE_WINDOW_COCOA', 1)
+    vulkan_conf.set('GST_VULKAN_HAVE_WINDOW_COCOA', 1)
     enabled_vulkan_winsys += ['cocoa']
   endif
 endif
@@ -234,7 +254,7 @@ if host_system == 'ios'
     )
     optional_deps += [uikit_dep]
     vulkan_windowing = true
-    vulkan_conf.set10('GST_VULKAN_HAVE_WINDOW_IOS', 1)
+    vulkan_conf.set('GST_VULKAN_HAVE_WINDOW_IOS', 1)
     enabled_vulkan_winsys += ['ios']
   endif
 endif
@@ -247,7 +267,7 @@ if host_system == 'windows'
     vulkan_priv_sources += ['win32/gstvkwindow_win32.c']
     optional_deps += [gdi_dep]
     vulkan_windowing = true
-    vulkan_conf.set10('GST_VULKAN_HAVE_WINDOW_WIN32', 1)
+    vulkan_conf.set('GST_VULKAN_HAVE_WINDOW_WIN32', 1)
     enabled_vulkan_winsys += ['win32']
   endif
 endif
@@ -259,7 +279,7 @@ if host_system == 'android'
       'android/gstvkwindow_android.c',
     )
     vulkan_windowing = true
-    vulkan_conf.set10('GST_VULKAN_HAVE_WINDOW_ANDROID', 1)
+    vulkan_conf.set('GST_VULKAN_HAVE_WINDOW_ANDROID', 1)
     enabled_vulkan_winsys += ['android']
   endif
 endif
@@ -359,7 +379,7 @@ if build_gir
     gen_sources += vulkan_gir
   endif
 endif
-libraries += [[pkg_name, library_def]]
+gst_libraries += [[pkg_name, library_def]]
 
 gstvulkan_dep = declare_dependency(link_with : gstvulkan,
   include_directories : [libsinc],

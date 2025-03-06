@@ -31,6 +31,8 @@
 
 #define RTP_HEADER_LEN 12
 
+static GstBuffer *create_feedback_buffer (gboolean with_padding);
+
 GST_START_TEST (test_rtp_buffer)
 {
   GstBuffer *buf;
@@ -1073,20 +1075,19 @@ GST_END_TEST;
 
 GST_START_TEST (test_rtcp_validate_reduced_with_padding)
 {
-  /* Reduced size packet with padding. */
-  guint8 rtcp_pkt[] = {
-    0xA0, 0xcd, 0x00, 0x08,     /* P=1, Type FB, length = 8 */
-    0x97, 0x6d, 0x21, 0x6a,
-    0x4d, 0x16, 0xaf, 0x14,
-    0x10, 0x1f, 0xd9, 0x91,
-    0x0f, 0xb7, 0x50, 0x88,
-    0x3b, 0x79, 0x31, 0x50,
-    0xbe, 0x19, 0x12, 0xa8,
-    0xbb, 0xce, 0x9e, 0x3e,
-    0x00, 0x00, 0x00, 0x04      /* RTCP padding */
-  };
+  GstRTCPPacket packet;
+  GstRTCPBuffer rtcp = GST_RTCP_BUFFER_INIT;
+  GstBuffer *buffer = create_feedback_buffer (TRUE);
 
-  fail_if (gst_rtcp_buffer_validate_data_reduced (rtcp_pkt, sizeof (rtcp_pkt)));
+  gst_rtcp_buffer_map (buffer, GST_MAP_READ, &rtcp);
+  fail_unless (gst_rtcp_buffer_get_first_packet (&rtcp, &packet));
+  fail_unless (gst_rtcp_packet_get_padding (&packet));
+  gst_rtcp_buffer_unmap (&rtcp);
+
+  fail_unless (gst_rtcp_buffer_validate_reduced (buffer));
+  fail_if (gst_rtcp_buffer_validate (buffer));
+
+  gst_buffer_unref (buffer);
 }
 
 GST_END_TEST;
@@ -1994,21 +1995,22 @@ GST_START_TEST (test_ext_timestamp_basic)
 
   /* no wraparound when timestamps are increasing */
   result = gst_rtp_buffer_ext_timestamp (&exttimestamp, 0);
-  fail_unless_equals_uint64 (result, 0);
+  fail_unless_equals_uint64 (result, (G_GUINT64_CONSTANT (1) << 32) + 0);
   result = gst_rtp_buffer_ext_timestamp (&exttimestamp, 10);
-  fail_unless_equals_uint64 (result, 10);
+  fail_unless_equals_uint64 (result, (G_GUINT64_CONSTANT (1) << 32) + 10);
   result = gst_rtp_buffer_ext_timestamp (&exttimestamp, 10);
-  fail_unless_equals_uint64 (result, 10);
+  fail_unless_equals_uint64 (result, (G_GUINT64_CONSTANT (1) << 32) + 10);
   result = gst_rtp_buffer_ext_timestamp (&exttimestamp,
       G_GUINT64_CONSTANT (1) + G_MAXINT32);
-  fail_unless_equals_uint64 (result, G_GUINT64_CONSTANT (1) + G_MAXINT32);
+  fail_unless_equals_uint64 (result,
+      (G_GUINT64_CONSTANT (1) << 32) + G_GUINT64_CONSTANT (1) + G_MAXINT32);
 
   /* Even big bumps under G_MAXINT32 don't result in wrap-around */
   exttimestamp = -1;
   result = gst_rtp_buffer_ext_timestamp (&exttimestamp, 1087500);
-  fail_unless_equals_uint64 (result, 1087500);
+  fail_unless_equals_uint64 (result, (G_GUINT64_CONSTANT (1) << 32) + 1087500);
   result = gst_rtp_buffer_ext_timestamp (&exttimestamp, 24);
-  fail_unless_equals_uint64 (result, 24);
+  fail_unless_equals_uint64 (result, (G_GUINT64_CONSTANT (1) << 32) + 24);
 }
 
 GST_END_TEST;
@@ -2019,13 +2021,15 @@ GST_START_TEST (test_ext_timestamp_wraparound)
 
   fail_unless_equals_uint64 (gst_rtp_buffer_ext_timestamp (&ext_ts,
           G_MAXUINT32 - 90000 + G_GUINT64_CONSTANT (1)),
-      (G_MAXUINT32 - 90000 + G_GUINT64_CONSTANT (1)));
+      ((G_GUINT64_CONSTANT (1) << 32) + G_MAXUINT32 - 90000 +
+          G_GUINT64_CONSTANT (1)));
 
   fail_unless_equals_uint64 (gst_rtp_buffer_ext_timestamp (&ext_ts, 0),
-      G_MAXUINT32 + G_GUINT64_CONSTANT (1));
+      (G_GUINT64_CONSTANT (1) << 32) + G_MAXUINT32 + G_GUINT64_CONSTANT (1));
 
   fail_unless_equals_uint64 (gst_rtp_buffer_ext_timestamp (&ext_ts, 90000),
-      (G_MAXUINT32 + G_GUINT64_CONSTANT (1) + 90000));
+      ((G_GUINT64_CONSTANT (1) << 32) + G_MAXUINT32 + G_GUINT64_CONSTANT (1) +
+          90000));
 }
 
 GST_END_TEST;
@@ -2035,37 +2039,41 @@ GST_START_TEST (test_ext_timestamp_wraparound_disordered)
 {
   guint64 ext_ts = -1;
 
-  fail_unless (gst_rtp_buffer_ext_timestamp (&ext_ts,
-          G_MAXUINT32 - 90000 + G_GUINT64_CONSTANT (1))
-      == (G_MAXUINT32 - 90000 + G_GUINT64_CONSTANT (1)));
+  fail_unless_equals_uint64 (gst_rtp_buffer_ext_timestamp (&ext_ts,
+          G_MAXUINT32 - 90000 + G_GUINT64_CONSTANT (1)),
+      (G_GUINT64_CONSTANT (1) << 32) + G_MAXUINT32 - 90000 +
+      G_GUINT64_CONSTANT (1));
 
-  fail_unless (gst_rtp_buffer_ext_timestamp (&ext_ts, 0)
-      == G_MAXUINT32 + G_GUINT64_CONSTANT (1));
+  fail_unless_equals_uint64 (gst_rtp_buffer_ext_timestamp (&ext_ts, 0),
+      (G_GUINT64_CONSTANT (1) << 32) + G_MAXUINT32 + G_GUINT64_CONSTANT (1));
 
   /* Unwrapping around */
-  fail_unless (gst_rtp_buffer_ext_timestamp (&ext_ts,
-          G_MAXUINT32 - 90000 + G_GUINT64_CONSTANT (1))
-      == (G_MAXUINT32 - 90000 + G_GUINT64_CONSTANT (1)));
+  fail_unless_equals_uint64 (gst_rtp_buffer_ext_timestamp (&ext_ts,
+          G_MAXUINT32 - 90000 + G_GUINT64_CONSTANT (1)),
+      (G_GUINT64_CONSTANT (1) << 32) + G_MAXUINT32 - 90000 +
+      G_GUINT64_CONSTANT (1));
 
-  fail_unless (gst_rtp_buffer_ext_timestamp (&ext_ts, 90000)
-      == (G_MAXUINT32 + G_GUINT64_CONSTANT (1) + 90000));
+  fail_unless_equals_uint64 (gst_rtp_buffer_ext_timestamp (&ext_ts, 90000),
+      (G_GUINT64_CONSTANT (1) << 32) + G_MAXUINT32 + G_GUINT64_CONSTANT (1) +
+      90000);
 }
 
 GST_END_TEST;
 
-GST_START_TEST (test_ext_timestamp_wraparound_disordered_cannot_unwrap)
+GST_START_TEST (test_ext_timestamp_wraparound_disordered_backwards)
 {
   guint64 ext_ts = -1;
 
-  fail_unless (gst_rtp_buffer_ext_timestamp (&ext_ts, 90000)
-      == 90000);
+  fail_unless_equals_uint64 (gst_rtp_buffer_ext_timestamp (&ext_ts, 90000),
+      (G_GUINT64_CONSTANT (1) << 32) + 90000);
 
-  /* Cannot unwrapping around */
-  fail_unless (gst_rtp_buffer_ext_timestamp (&ext_ts,
-          G_MAXUINT32 - 90000 + G_GUINT64_CONSTANT (1)) == 0);
+  /* Wraps backwards */
+  fail_unless_equals_uint64 (gst_rtp_buffer_ext_timestamp (&ext_ts,
+          G_MAXUINT32 - 90000 + G_GUINT64_CONSTANT (1)),
+      G_MAXUINT32 - 90000 + G_GUINT64_CONSTANT (1));
 
-  fail_unless (gst_rtp_buffer_ext_timestamp (&ext_ts, 90000)
-      == 90000);
+  fail_unless_equals_uint64 (gst_rtp_buffer_ext_timestamp (&ext_ts, 90000),
+      (G_GUINT64_CONSTANT (1) << 32) + 90000);
 }
 
 GST_END_TEST;
@@ -2365,8 +2373,7 @@ rtp_suite (void)
   tcase_add_test (tc_chain, test_ext_timestamp_basic);
   tcase_add_test (tc_chain, test_ext_timestamp_wraparound);
   tcase_add_test (tc_chain, test_ext_timestamp_wraparound_disordered);
-  tcase_add_test (tc_chain,
-      test_ext_timestamp_wraparound_disordered_cannot_unwrap);
+  tcase_add_test (tc_chain, test_ext_timestamp_wraparound_disordered_backwards);
 
   tcase_add_test (tc_chain, test_rtcp_compound_padding);
   tcase_add_test (tc_chain, test_rtp_buffer_extlen_wraparound);

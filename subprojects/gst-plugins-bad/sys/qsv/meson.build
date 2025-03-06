@@ -1,9 +1,16 @@
 qsv_sources = [
   'gstqsvallocator.cpp',
+  'gstqsvav1enc.cpp',
+  'gstqsvdecoder.cpp',
   'gstqsvencoder.cpp',
+  'gstqsvh264dec.cpp',
   'gstqsvh264enc.cpp',
+  'gstqsvh265dec.cpp',
   'gstqsvh265enc.cpp',
+  'gstqsvjpegdec.cpp',
+  'gstqsvjpegenc.cpp',
   'gstqsvutils.cpp',
+  'gstqsvvp9dec.cpp',
   'gstqsvvp9enc.cpp',
   'plugin.cpp',
 ]
@@ -90,5 +97,4 @@ gstqsv = library('gstqsv',
   install_dir : plugins_install_dir,
 )
 
-pkgconfig.generate(gstqsv, install_dir : plugins_pkgconfig_install_dir)
 plugins += [gstqsv]

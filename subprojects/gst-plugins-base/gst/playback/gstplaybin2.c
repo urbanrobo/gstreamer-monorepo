@@ -207,7 +207,7 @@
 #include <string.h>
 #include <gst/gst.h>
 
-#include <gst/gst-i18n-plugin.h>
+#include <glib/gi18n-lib.h>
 #include <gst/pbutils/pbutils.h>
 #include <gst/audio/streamvolume.h>
 #include <gst/video/video-info.h>
@@ -1670,12 +1670,7 @@ gst_play_bin_set_uri (GstPlayBin * playbin, const gchar * uri)
 {
   GstSourceGroup *group;
 
-  if (uri == NULL) {
-    g_warning ("cannot set NULL uri");
-    return;
-  }
-
-  if (!gst_playbin_uri_is_valid (playbin, uri)) {
+  if (uri && !gst_playbin_uri_is_valid (playbin, uri)) {
     if (g_str_has_prefix (uri, "file:")) {
       GST_WARNING_OBJECT (playbin, "not entirely correct file URI '%s' - make "
           "sure to escape spaces and non-ASCII characters properly and specify "
@@ -1692,11 +1687,16 @@ gst_play_bin_set_uri (GstPlayBin * playbin, const gchar * uri)
   GST_SOURCE_GROUP_LOCK (group);
   /* store the uri in the next group we will play */
   g_free (group->uri);
-  group->uri = g_strdup (uri);
-  group->valid = TRUE;
+  if (uri) {
+    group->uri = g_strdup (uri);
+    group->valid = TRUE;
+  } else {
+    group->uri = NULL;
+    group->valid = FALSE;
+  }
   GST_SOURCE_GROUP_UNLOCK (group);
 
-  GST_DEBUG ("set new uri to %s", uri);
+  GST_DEBUG ("set new uri to %s", GST_STR_NULL (uri));
   GST_PLAY_BIN_UNLOCK (playbin);
 }
 
@@ -2871,12 +2871,6 @@ gst_play_bin_query (GstElement * element, GstQuery * query)
   return ret;
 }
 
-/* mime types we are not handling on purpose right now, don't post a
- * missing-plugin message for these */
-static const gchar *blacklisted_mimes[] = {
-  NULL
-};
-
 static void
 gst_play_bin_handle_message (GstBin * bin, GstMessage * msg)
 {
@@ -2884,21 +2878,7 @@ gst_play_bin_handle_message (GstBin * bin, GstMessage * msg)
   GstSourceGroup *group;
   gboolean do_reset_time = FALSE;
 
-  if (gst_is_missing_plugin_message (msg)) {
-    gchar *detail;
-    guint i;
-
-    detail = gst_missing_plugin_message_get_installer_detail (msg);
-    for (i = 0; detail != NULL && blacklisted_mimes[i] != NULL; ++i) {
-      if (strstr (detail, "|decoder-") && strstr (detail, blacklisted_mimes[i])) {
-        GST_LOG_OBJECT (bin, "suppressing message %" GST_PTR_FORMAT, msg);
-        gst_message_unref (msg);
-        g_free (detail);
-        return;
-      }
-    }
-    g_free (detail);
-  } else if (GST_MESSAGE_TYPE (msg) == GST_MESSAGE_ASYNC_START ||
+  if (GST_MESSAGE_TYPE (msg) == GST_MESSAGE_ASYNC_START ||
       GST_MESSAGE_TYPE (msg) == GST_MESSAGE_ASYNC_DONE) {
     GstObject *src = GST_OBJECT_CAST (msg->src);
 
@@ -6041,11 +6021,11 @@ gst_play_bin_overlay_init (gpointer g_iface, gpointer g_iface_data)
 
 static void
 gst_play_bin_navigation_send_event (GstNavigation * navigation,
-    GstStructure * structure)
+    GstEvent * event)
 {
   GstPlayBin *playbin = GST_PLAY_BIN (navigation);
 
-  gst_navigation_send_event (GST_NAVIGATION (playbin->playsink), structure);
+  gst_navigation_send_event_simple (GST_NAVIGATION (playbin->playsink), event);
 }
 
 static void
@@ -6053,7 +6033,7 @@ gst_play_bin_navigation_init (gpointer g_iface, gpointer g_iface_data)
 {
   GstNavigationInterface *iface = (GstNavigationInterface *) g_iface;
 
-  iface->send_event = gst_play_bin_navigation_send_event;
+  iface->send_event_simple = gst_play_bin_navigation_send_event;
 }
 
 static const GList *

@@ -846,6 +846,7 @@ gst_raw_video_parse_set_config_from_caps (GstRawBaseParse * raw_base_parse,
   if (config_ptr->ready) {
     config_ptr->width = GST_VIDEO_INFO_WIDTH (&(config_ptr->info));
     config_ptr->height = GST_VIDEO_INFO_HEIGHT (&(config_ptr->info));
+    config_ptr->format = GST_VIDEO_INFO_FORMAT (&(config_ptr->info));
     config_ptr->pixel_aspect_ratio_n =
         GST_VIDEO_INFO_PAR_N (&(config_ptr->info));
     config_ptr->pixel_aspect_ratio_d =
@@ -853,7 +854,6 @@ gst_raw_video_parse_set_config_from_caps (GstRawBaseParse * raw_base_parse,
     config_ptr->framerate_n = GST_VIDEO_INFO_FPS_N (&(config_ptr->info));
     config_ptr->framerate_d = GST_VIDEO_INFO_FPS_D (&(config_ptr->info));
     config_ptr->interlaced = GST_VIDEO_INFO_IS_INTERLACED (&(config_ptr->info));
-    config_ptr->height = GST_VIDEO_INFO_HEIGHT (&(config_ptr->info));
     config_ptr->top_field_first = 0;
     config_ptr->frame_size = 0;
 
@@ -1161,9 +1161,9 @@ gst_raw_video_parse_update_info (GstRawVideoParseConfig * config)
     gint stride = GST_VIDEO_INFO_PLANE_STRIDE (info, last_plane);
     gint x_tiles = GST_VIDEO_TILE_X_TILES (stride);
     gint y_tiles = GST_VIDEO_TILE_Y_TILES (stride);
-    gint tile_width = 1 << GST_VIDEO_FORMAT_INFO_TILE_WS (info->finfo);
-    gint tile_height = 1 << GST_VIDEO_FORMAT_INFO_TILE_HS (info->finfo);
-    last_plane_size = x_tiles * y_tiles * tile_width * tile_height;
+    guint tile_size = GST_VIDEO_FORMAT_INFO_TILE_SIZE (info->finfo, last_plane);
+
+    last_plane_size = x_tiles * y_tiles * tile_size;
   } else {
     gint comp[GST_VIDEO_MAX_COMPONENTS];
     gst_video_format_info_component (info->finfo, last_plane, comp);

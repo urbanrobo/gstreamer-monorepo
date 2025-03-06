@@ -30,6 +30,7 @@ video_sources = files([
   'video-multiview.c',
   'video-resampler.c',
   'video-scaler.c',
+  'video-sei.c',
   'video-tile.c',
   'video-overlay-composition.c',
   'videodirection.c',
@@ -73,6 +74,7 @@ video_headers = files([
   'video-blend.h',
   'video-overlay-composition.h',
   'video-multiview.h',
+  'video-sei.h',
 ])
 install_headers(video_headers, subdir : 'gstreamer-1.0/gst/video/')
 
@@ -173,7 +175,7 @@ if build_gir
     video_gen_sources += [video_gir]
   endif
 endif
-libraries += [[pkg_name, library_def]]
+gst_libraries += [[pkg_name, library_def]]
 
 video_dep = declare_dependency(link_with : gstvideo,
   include_directories : [libsinc],

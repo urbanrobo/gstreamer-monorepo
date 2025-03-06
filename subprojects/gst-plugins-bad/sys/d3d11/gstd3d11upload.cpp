@@ -222,6 +222,7 @@ gst_d3d11_upload_propose_allocation (GstBaseTransform * trans,
   GstBufferPool *pool;
   GstCaps *caps;
   guint size;
+  gboolean is_d3d11 = FALSE;
 
   if (!GST_BASE_TRANSFORM_CLASS (parent_class)->propose_allocation (trans,
           decide_query, query))
@@ -248,14 +249,19 @@ gst_d3d11_upload_propose_allocation (GstBaseTransform * trans,
             GST_CAPS_FEATURE_MEMORY_D3D11_MEMORY)) {
       GST_DEBUG_OBJECT (filter, "upstream support d3d11 memory");
       pool = gst_d3d11_buffer_pool_new (filter->device);
+      is_d3d11 = TRUE;
     } else {
-      pool = gst_d3d11_staging_buffer_pool_new (filter->device);
+      pool = gst_video_buffer_pool_new ();
     }
 
     config = gst_buffer_pool_get_config (pool);
 
     gst_buffer_pool_config_add_option (config,
         GST_BUFFER_POOL_OPTION_VIDEO_META);
+    if (!is_d3d11) {
+      gst_buffer_pool_config_add_option (config,
+          GST_BUFFER_POOL_OPTION_VIDEO_ALIGNMENT);
+    }
 
     size = GST_VIDEO_INFO_SIZE (&info);
     gst_buffer_pool_config_set_params (config, caps, size, 0, 0);
@@ -299,7 +305,7 @@ gst_d3d11_upload_decide_allocation (GstBaseTransform * trans, GstQuery * query)
   GstStructure *config;
   gboolean update_pool = FALSE;
   GstVideoInfo vinfo;
-  const GstD3D11Format *d3d11_format;
+  GstD3D11Format d3d11_format;
   GstD3D11AllocationParams *d3d11_params;
   guint bind_flags = 0;
   guint i;
@@ -315,17 +321,16 @@ gst_d3d11_upload_decide_allocation (GstBaseTransform * trans, GstQuery * query)
 
   gst_video_info_from_caps (&vinfo, outcaps);
 
-  d3d11_format = gst_d3d11_device_format_from_gst (filter->device,
-      GST_VIDEO_INFO_FORMAT (&vinfo));
-  if (!d3d11_format) {
+  if (!gst_d3d11_device_get_format (filter->device,
+          GST_VIDEO_INFO_FORMAT (&vinfo), &d3d11_format)) {
     GST_ERROR_OBJECT (filter, "Unknown format caps %" GST_PTR_FORMAT, outcaps);
     return FALSE;
   }
 
-  if (d3d11_format->dxgi_format == DXGI_FORMAT_UNKNOWN) {
-    dxgi_format = d3d11_format->resource_format[0];
+  if (d3d11_format.dxgi_format == DXGI_FORMAT_UNKNOWN) {
+    dxgi_format = d3d11_format.resource_format[0];
   } else {
-    dxgi_format = d3d11_format->dxgi_format;
+    dxgi_format = d3d11_format.dxgi_format;
   }
 
   device_handle = gst_d3d11_device_get_device_handle (filter->device);
@@ -373,7 +378,7 @@ gst_d3d11_upload_decide_allocation (GstBaseTransform * trans, GstQuery * query)
   d3d11_params = gst_buffer_pool_config_get_d3d11_allocation_params (config);
   if (!d3d11_params) {
     d3d11_params = gst_d3d11_allocation_params_new (filter->device, &vinfo,
-        (GstD3D11AllocationFlags) 0, bind_flags);
+        GST_D3D11_ALLOCATION_FLAG_DEFAULT, bind_flags, 0);
   } else {
     /* Set bind flag */
     for (i = 0; i < GST_VIDEO_INFO_N_PLANES (&vinfo); i++) {

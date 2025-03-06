@@ -26,7 +26,7 @@
 #include "gstalsaelements.h"
 #include "gstalsadeviceprovider.h"
 
-#include <gst/gst-i18n-plugin.h>
+#include <glib/gi18n-lib.h>
 
 static gboolean
 plugin_init (GstPlugin * plugin)
@@ -39,7 +39,7 @@ plugin_init (GstPlugin * plugin)
   ret |= GST_ELEMENT_REGISTER (alsasink, plugin);
   ret |= GST_ELEMENT_REGISTER (alsamidisrc, plugin);
 
-  return TRUE;
+  return ret;
 }
 
 GST_PLUGIN_DEFINE (GST_VERSION_MAJOR,

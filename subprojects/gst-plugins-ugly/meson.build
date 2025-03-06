@@ -1,6 +1,6 @@
 project('gst-plugins-ugly', 'c',
-  version : '1.21.0.1',
-  meson_version : '>= 0.59',
+  version : '1.22.12.1',
+  meson_version : '>= 0.62',
   default_options : [ 'warning_level=1',
                       'buildtype=debugoptimized' ])
 
@@ -19,7 +19,7 @@ gst_version_is_dev = gst_version_minor.is_odd() and gst_version_micro < 90
 
 have_cxx = add_languages('cpp', native: false, required: false)
 
-glib_req = '>= 2.56.0'
+glib_req = '>= 2.62.0'
 
 if gst_version_is_stable
   gst_req = '>= @0@.@1@.0'.format(gst_version_major, gst_version_minor)
@@ -29,6 +29,7 @@ endif
 
 api_version = '1.0'
 
+static_build = get_option('default_library') == 'static'
 plugins_install_dir = join_paths(get_option('libdir'), 'gstreamer-1.0')
 plugins = []
 
@@ -48,12 +49,27 @@ if cc.get_id() == 'msvc'
       '/wd4244', # lossy type conversion (e.g. double -> int)
       '/wd4305', # truncating type conversion (e.g. double -> float)
       cc.get_supported_arguments(['/utf-8']), # set the input encoding to utf-8
-
-      # Enable some warnings on MSVC to match GCC/Clang behaviour
-      '/w14062', # enumerator 'identifier' in switch of enum 'enumeration' is not handled
-      '/w14101', # 'identifier' : unreferenced local variable
-      '/w14189', # 'identifier' : local variable is initialized but not referenced
   ]
+
+  if gst_version_is_dev
+    # Enable some warnings on MSVC to match GCC/Clang behaviour
+    msvc_args += cc.get_supported_arguments([
+      '/we4002', # too many actual parameters for macro 'identifier'
+      '/we4003', # not enough actual parameters for macro 'identifier'
+      '/we4013', # 'function' undefined; assuming extern returning int
+      '/we4020', # 'function' : too many actual parameters
+      '/we4027', # function declared without formal parameter list
+      '/we4029', # declared formal parameter list different from definition
+      '/we4033', # 'function' must return a value
+      '/we4045', # 'array' : array bounds overflow
+      '/we4047', # 'operator' : 'identifier1' differs in levels of indirection from 'identifier2'
+      '/we4053', # one void operand for '?:'
+      '/we4062', # enumerator 'identifier' in switch of enum 'enumeration' is not handled
+      '/we4098', # 'function' : void function returning a value
+      '/we4101', # 'identifier' : unreferenced local variable
+      '/we4189', # 'identifier' : local variable is initialized but not referenced
+    ])
+  endif
   if have_cxx
     add_project_arguments(msvc_args, language: ['c', 'cpp'])
   else
@@ -73,7 +89,18 @@ if have_cxx and cxx.has_link_argument('-Wl,-Bsymbolic-functions')
   add_project_link_arguments('-Wl,-Bsymbolic-functions', language : 'cpp')
 endif
 
+# glib doesn't support unloading, which means that unloading and reloading
+# any library that registers static types will fail
+if cc.has_link_argument('-Wl,-z,nodelete')
+  add_project_link_arguments('-Wl,-z,nodelete', language: 'c')
+endif
+if have_cxx and cxx.has_link_argument('-Wl,-z,nodelete')
+  add_project_link_arguments('-Wl,-z,nodelete', language: 'cpp')
+endif
+
 cdata = configuration_data()
+cdata.set('ENABLE_NLS', 1)
+
 check_headers = [
   ['HAVE_DLFCN_H', 'dlfcn.h'],
   ['HAVE_INTTYPES_H', 'inttypes.h'],
@@ -172,7 +199,7 @@ else
   cdata.set('DISABLE_ORC', 1)
 endif
 
-gmodule_dep = dependency('gmodule-2.0', fallback : ['glib', 'libgmodule_dep'])
+gmodule_dep = dependency('gmodule-no-export-2.0', version: glib_req)
 
 if gmodule_dep.version().version_compare('< 2.67.4')
   cdata.set('g_memdup2(ptr,sz)', '(G_LIKELY(((guint64)(sz)) < G_MAXUINT)) ? g_memdup(ptr,sz) : (g_abort(),NULL)')
@@ -225,7 +252,6 @@ warning_flags = [
 warning_c_flags = [
   '-Wmissing-prototypes',
   '-Wold-style-definition',
-  '-Wdeclaration-after-statement',
   '-Wnested-externs'
 ]
 
@@ -287,7 +313,6 @@ subdir('tests')
 
 # xgettext is optional (on Windows for instance)
 if find_program('xgettext', required : get_option('nls')).found()
-  cdata.set('ENABLE_NLS', 1)
   subdir('po')
 endif
 subdir('docs')
@@ -304,8 +329,15 @@ endif
 
 configure_file(output : 'config.h', configuration : cdata)
 
+meson.add_dist_script('scripts/gen-changelog.py', meson.project_name(), '1.20.0', meson.project_version())
+
 plugin_names = []
+gst_plugins = []
 foreach plugin: plugins
+  pkgconfig.generate(plugin, install_dir: plugins_pkgconfig_install_dir)
+  dep = declare_dependency(link_with: plugin, variables: {'full_path': plugin.full_path()})
+  meson.override_dependency(plugin.name(), dep)
+  gst_plugins += [dep]
   if plugin.name().startswith('gst')
     plugin_names += [plugin.name().substring(3)]
   else

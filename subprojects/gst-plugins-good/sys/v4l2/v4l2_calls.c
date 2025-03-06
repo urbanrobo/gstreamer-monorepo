@@ -46,7 +46,7 @@
 #include "gstv4l2sink.h"
 #include "gstv4l2videodec.h"
 
-#include "gst/gst-i18n-plugin.h"
+#include <glib/gi18n-lib.h>
 
 GST_DEBUG_CATEGORY_EXTERN (v4l2_debug);
 #define GST_CAT_DEFAULT v4l2_debug
@@ -177,6 +177,7 @@ gst_v4l2_fill_lists (GstV4l2Object * v4l2object)
 
     if (input.type == V4L2_INPUT_TYPE_TUNER) {
       struct v4l2_tuner vtun;
+      memset (&vtun, 0, sizeof (vtun));
 
       v4l2channel->tuner = input.tuner;
       channel->flags |= GST_TUNER_CHANNEL_FREQUENCY;
@@ -307,6 +308,10 @@ gst_v4l2_fill_lists (GstV4l2Object * v4l2object)
       } else {
         GST_WARNING_OBJECT (e, "Failed querying control %d on device '%s'. "
             "(%d - %s)", n, v4l2object->videodev, errno, strerror (errno));
+        if (n > (V4L2_CID_PRIVATE_BASE + V4L2_CID_MAX_CTRLS)) {
+          GST_DEBUG_OBJECT (e, "Finish control by reaching V4L2_CID_MAX_CTRLS");
+          break;
+        }
         continue;
       }
     }

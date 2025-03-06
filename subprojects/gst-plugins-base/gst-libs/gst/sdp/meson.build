@@ -24,7 +24,7 @@ library_def = {'lib': gstsdp}
 pkg_name = 'gstreamer-sdp-1.0'
 sdp_gen_sources  = []
 pkgconfig.generate(gstsdp,
-  libraries : [glib_deps],
+  libraries : [gst_dep],
   variables : pkgconfig_variables,
   subdirs : pkgconfig_subdirs,
   name : pkg_name,
@@ -52,7 +52,7 @@ if build_gir
     sdp_gen_sources += [sdp_gir]
   endif
 endif
-libraries += [[pkg_name, library_def]]
+gst_libraries += [[pkg_name, library_def]]
 
 sdp_dep = declare_dependency(link_with: gstsdp,
   include_directories : [libsinc],

@@ -22,12 +22,13 @@
  * Boston, MA 02111-1307, USA.
  */
 
-#include <string.h>
-#include <stdlib.h>
 
 #ifdef HAVE_CONFIG_H
 #  include "config.h"
 #endif
+
+#include <string.h>
+#include <stdlib.h>
 
 #include "validate.h"
 #include "gst-validate-internal.h"
@@ -564,10 +565,10 @@ synthesize_reports (GstValidateRunner * runner, GstValidateReport * report)
   GST_VALIDATE_RUNNER_LOCK (runner);
   reports =
       g_hash_table_lookup (runner->priv->reports_by_type,
-      (gconstpointer) issue_id);
+      GINT_TO_POINTER (issue_id));
   reports = g_list_append (reports, gst_validate_report_ref (report));
-  g_hash_table_insert (runner->priv->reports_by_type, (gpointer) issue_id,
-      reports);
+  g_hash_table_insert (runner->priv->reports_by_type,
+      GINT_TO_POINTER (issue_id), reports);
   GST_VALIDATE_RUNNER_UNLOCK (runner);
 }
 
@@ -750,7 +751,7 @@ gst_validate_runner_add_report (GstValidateRunner * runner,
 
 /**
  * gst_validate_runner_get_reports_count:
- * @runner: The $GstValidateRunner to get the number of reports from
+ * @runner: The #GstValidateRunner to get the number of reports from
  *
  * Get the number of reports present in the runner:
  *
@@ -780,7 +781,7 @@ gst_validate_runner_get_reports_count (GstValidateRunner * runner)
  * gst_validate_runner_get_reports:
  * @runner: The #GstValidateRunner
  *
- * Return: (element-type GstValidateReport)(transfer full): all the reports
+ * Returns: (element-type GstValidateReport) (transfer full): The list of reports
  */
 GList *
 gst_validate_runner_get_reports (GstValidateRunner * runner)

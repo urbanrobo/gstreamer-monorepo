@@ -54,11 +54,14 @@
 #define CK_DLL_EXP extern
 #endif
 
-#if _MSC_VER
+#ifdef _MSC_VER
 #include <WinSock2.h>           /* struct timeval, API used in gettimeofday implementation */
 #include <io.h>                 /* read, write */
-#include <process.h>            /* getpid */
 #include <BaseTsd.h>            /* for ssize_t */
+#include <processthreadsapi.h> /* GetCurrentProcessId */
+/* getpid() is not allowed in case of UWP, use GetCurrentProcessId() instead
+ * which can be used on both desktop and UWP */
+#define getpid GetCurrentProcessId
 typedef SSIZE_T ssize_t;
 #endif /* _MSC_VER */
 
@@ -114,7 +117,7 @@ CK_DLL_EXP void *rpl_malloc (size_t n);
 CK_DLL_EXP void *rpl_realloc (void *p, size_t n);
 #endif /* !HAVE_REALLOC */
 
-#if !HAVE_GETPID && HAVE__GETPID
+#if !HAVE_GETPID && HAVE__GETPID && !defined(_MSC_VER)
 #define getpid _getpid
 #endif /* !HAVE_GETPID && HAVE__GETPID */
 
@@ -174,7 +177,7 @@ struct timespec
 #endif /* STRUCT_TIMESPEC_DEFINITION_MISSING */
 
 #ifdef STRUCT_ITIMERSPEC_DEFINITION_MISSING
-/* 
+/*
  * The following structure is defined in POSIX.1b for timer start values and intervals.
  * If it is not defined in time.h, then we need to define it here.
  */
@@ -185,7 +188,7 @@ struct itimerspec
 };
 #endif /* STRUCT_ITIMERSPEC_DEFINITION_MISSING */
 
-/* 
+/*
  * Do a simple forward declaration in case the struct is not defined.
  * In the versions of timer_create in libcompat, sigevent is never
  * used.

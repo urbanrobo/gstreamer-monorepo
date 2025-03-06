@@ -1123,8 +1123,7 @@ gst_bin_do_deep_add_remove (GstBin * bin, gint sig_id, const gchar * sig_name,
     do {
       ires = gst_iterator_foreach (it, bin_deep_iterator_foreach, &elements);
       if (ires != GST_ITERATOR_DONE) {
-        g_queue_foreach (&elements, (GFunc) gst_object_unref, NULL);
-        g_queue_clear (&elements);
+        g_queue_clear_full (&elements, (GDestroyNotify) gst_object_unref);
       }
       if (ires == GST_ITERATOR_RESYNC)
         gst_iterator_resync (it);
@@ -1142,8 +1141,9 @@ gst_bin_do_deep_add_remove (GstBin * bin, gint sig_id, const gchar * sig_name,
               " in bin %" GST_PTR_FORMAT, sig_name, e, parent);
           g_signal_emit (bin, sig_id, 0, parent, e);
           gst_object_unref (parent);
-          gst_object_unref (e);
         }
+
+        gst_object_unref (e);
       }
     }
     gst_iterator_free (it);
@@ -1567,8 +1567,10 @@ gst_bin_remove_func (GstBin * bin, GstElement * element)
   GST_OBJECT_LOCK (element);
   elem_name = g_strdup (GST_ELEMENT_NAME (element));
 
-  if (GST_OBJECT_PARENT (element) != GST_OBJECT_CAST (bin))
+  if (GST_OBJECT_PARENT (element) != GST_OBJECT_CAST (bin)) {
+    GST_OBJECT_UNLOCK (element);
     goto not_in_bin;
+  }
 
   /* remove the parent ref */
   GST_OBJECT_PARENT (element) = NULL;
@@ -1819,7 +1821,6 @@ no_state_recalc:
   /* ERROR handling */
 not_in_bin:
   {
-    GST_OBJECT_UNLOCK (element);
     GST_OBJECT_UNLOCK (bin);
     GST_WARNING_OBJECT (bin, "Element '%s' is not in bin", elem_name);
     g_free (elem_name);
@@ -2586,9 +2587,16 @@ no_preroll:
 
 locked:
   {
-    GST_DEBUG_OBJECT (element,
-        "element is locked, return previous return %s",
-        gst_element_state_change_return_get_name (ret));
+    if (ret == GST_STATE_CHANGE_FAILURE) {
+      GST_DEBUG_OBJECT (element,
+          "element is locked, and previous state change failed, return %s",
+          gst_element_state_change_return_get_name (GST_STATE_CHANGE_SUCCESS));
+      ret = GST_STATE_CHANGE_SUCCESS;
+    } else {
+      GST_DEBUG_OBJECT (element,
+          "element is locked, return previous return %s",
+          gst_element_state_change_return_get_name (ret));
+    }
     GST_STATE_UNLOCK (element);
     return ret;
   }

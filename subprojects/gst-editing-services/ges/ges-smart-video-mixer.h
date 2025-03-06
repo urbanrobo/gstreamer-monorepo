@@ -50,12 +50,20 @@ struct _GESSmartMixer
   GHashTable *pads_infos;
   GstPad *srcpad;
   GstElement *mixer;
+  GstElement *real_mixer;
   GMutex lock;
 
   GstCaps *caps;
   gboolean is_transition;
 
-  gpointer _ges_reserved[GES_PADDING];
+  union {
+    gpointer _ges_reserved[GES_PADDING];
+
+    struct {
+      gboolean has_operator;
+    } abi;
+
+  } ABI;
 };
 
 G_GNUC_INTERNAL

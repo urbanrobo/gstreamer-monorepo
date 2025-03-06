@@ -146,7 +146,8 @@ static GstStaticPadTemplate videosink_templ =
         "video/x-prores, "
         COMMON_VIDEO_CAPS "; "
         "video/x-wmv, " "wmvversion = (int) [ 1, 3 ], " COMMON_VIDEO_CAPS "; "
-        "video/x-av1, " COMMON_VIDEO_CAPS ";"
+        "video/x-av1, " "stream-format = (string) \"obu-stream\", "
+        "alignment = (string) \"tu\", " COMMON_VIDEO_CAPS ";"
         "video/x-ffv, ffversion = (int) 1, " COMMON_VIDEO_CAPS)
     );
 
@@ -179,7 +180,9 @@ static GstStaticPadTemplate audiosink_templ =
         COMMON_AUDIO_CAPS "; "
         "audio/x-flac, "
         COMMON_AUDIO_CAPS "; "
-        "audio/x-opus; "
+        "audio/x-opus, "
+        "channels = (int) [ 1, 8 ], "
+        "rate = (int) { 8000, 16000, 24000, 32000, 48000 }; "
         "audio/x-speex, "
         COMMON_AUDIO_CAPS "; "
         "audio/x-raw, "
@@ -865,12 +868,22 @@ gst_matroska_mux_handle_sink_event (GstCollectPads * pads,
         g_free (lang);
       }
 
-      /* FIXME: what about stream-specific tags? */
       if (gst_tag_list_get_scope (list) == GST_TAG_SCOPE_GLOBAL) {
         gst_tag_setter_merge_tags (GST_TAG_SETTER (mux), list,
             gst_tag_setter_get_tag_merge_mode (GST_TAG_SETTER (mux)));
       } else {
+        gchar *title = NULL;
+
+        /* Stream specific tags */
         gst_tag_list_insert (collect_pad->tags, list, GST_TAG_MERGE_REPLACE);
+
+        /* If the tags contain a title, update the context name to write it there */
+        if (gst_tag_list_get_string (list, GST_TAG_TITLE, &title)) {
+          GST_INFO_OBJECT (pad, "Setting track name to '%s'", title);
+          g_free (context->name);
+          context->name = g_strdup (title);
+        }
+        g_free (title);
       }
 
       gst_event_unref (event);
@@ -988,6 +1001,10 @@ check_field (GQuark field_id, const GValue * value, gpointer user_data)
       return FALSE;
     } else if (field_id == g_quark_from_static_string ("level")) {
       return FALSE;
+    } else if (field_id == g_quark_from_static_string ("width")) {
+      return FALSE;
+    } else if (field_id == g_quark_from_static_string ("height")) {
+      return FALSE;
     }
   } else if (gst_structure_has_name (structure, "video/x-vp8")
       || gst_structure_has_name (structure, "video/x-vp9")) {
@@ -996,6 +1013,10 @@ check_field (GQuark field_id, const GValue * value, gpointer user_data)
     if (field_id == g_quark_from_static_string ("streamheader"))
       return FALSE;
     else if (field_id == g_quark_from_static_string ("profile"))
+      return FALSE;
+    else if (field_id == g_quark_from_static_string ("width"))
+      return FALSE;
+    else if (field_id == g_quark_from_static_string ("height"))
       return FALSE;
   }
 
@@ -1008,13 +1029,44 @@ check_field (GQuark field_id, const GValue * value, gpointer user_data)
       return FALSE;
     else if (field_id == g_quark_from_static_string ("bit-depth-luma"))
       return FALSE;
+
+    /* Remove pixel-aspect-ratio field if it contains 1/1 as that's considered
+     * equivalent to not having the field but are not considered equivalent
+     * by the generic caps functions
+     */
+    if (field_id == g_quark_from_static_string ("pixel-aspect-ratio")) {
+      gint par_n = gst_value_get_fraction_numerator (value);
+      gint par_d = gst_value_get_fraction_denominator (value);
+
+      if (par_n == 1 && par_d == 1)
+        return FALSE;
+    }
+
+    /* Remove multiview-mode=mono and multiview-flags=0 fields as those are
+     * equivalent with not having the fields but are not considered equivalent
+     * by the generic caps functions.
+     */
+    if (field_id == g_quark_from_static_string ("multiview-mode")) {
+      const gchar *s = g_value_get_string (value);
+
+      if (g_strcmp0 (s, "mono") == 0)
+        return FALSE;
+    }
+
+    if (field_id == g_quark_from_static_string ("multiview-flags")) {
+      guint multiview_flags = gst_value_get_flagset_flags (value);
+
+      if (multiview_flags == 0)
+        return FALSE;
+    }
   }
 
   return TRUE;
 }
 
 static gboolean
-check_new_caps (GstCaps * old_caps, GstCaps * new_caps)
+check_new_caps (GstMatroskaTrackVideoContext * videocontext, GstCaps * old_caps,
+    GstCaps * new_caps)
 {
   GstStructure *old_s, *new_s;
   gboolean ret;
@@ -1066,9 +1118,17 @@ gst_matroska_mux_video_pad_setcaps (GstPad * pad, GstCaps * caps)
 
   mux = GST_MATROSKA_MUX (GST_PAD_PARENT (pad));
 
+  /* find context */
+  collect_pad = (GstMatroskaPad *) gst_pad_get_element_private (pad);
+  g_assert (collect_pad);
+  context = collect_pad->track;
+  g_assert (context);
+  g_assert (context->type == GST_MATROSKA_TRACK_TYPE_VIDEO);
+  videocontext = (GstMatroskaTrackVideoContext *) context;
+
   if ((old_caps = gst_pad_get_current_caps (pad))) {
     if (mux->state >= GST_MATROSKA_MUX_STATE_HEADER
-        && !check_new_caps (old_caps, caps)) {
+        && !check_new_caps (videocontext, old_caps, caps)) {
       GST_ELEMENT_ERROR (mux, STREAM, MUX, (NULL),
           ("Caps changes are not supported by Matroska\nCurrent: `%"
               GST_PTR_FORMAT "`\nNew: `%" GST_PTR_FORMAT "`", old_caps, caps));
@@ -1082,14 +1142,6 @@ gst_matroska_mux_video_pad_setcaps (GstPad * pad, GstCaps * caps)
             " arrived late. Headers were already written", pad));
     goto refuse_caps;
   }
-
-  /* find context */
-  collect_pad = (GstMatroskaPad *) gst_pad_get_element_private (pad);
-  g_assert (collect_pad);
-  context = collect_pad->track;
-  g_assert (context);
-  g_assert (context->type == GST_MATROSKA_TRACK_TYPE_VIDEO);
-  videocontext = (GstMatroskaTrackVideoContext *) context;
 
   /* gst -> matroska ID'ing */
   structure = gst_caps_get_structure (caps, 0);

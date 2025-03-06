@@ -769,6 +769,7 @@ _file_get_structures (GFile * file, gchar ** err,
               /* We let the last attempt fail and report an error in the
                * including code path */
             }
+            g_strfreev (include_dirs);
           }
 
           included_path = g_file_get_path (included);
@@ -1094,7 +1095,7 @@ gst_validate_object_set_property (GstValidateReporter * reporter,
   return res;
 }
 
-#ifdef G_OS_UNIX
+#if defined (G_OS_UNIX) && !defined (__APPLE__)
 static void
 fault_restore (void)
 {
@@ -1157,12 +1158,12 @@ fault_setup (void)
   sigaction (SIGSEGV, &action, NULL);
   sigaction (SIGQUIT, &action, NULL);
 }
-#endif /* G_OS_UNIX */
+#endif /* G_OS_UNIX && !__APPLE__ */
 
 void
 gst_validate_spin_on_fault_signals (void)
 {
-#ifdef G_OS_UNIX
+#if defined (G_OS_UNIX) && !defined (__APPLE__)
   fault_setup ();
 #endif
 }

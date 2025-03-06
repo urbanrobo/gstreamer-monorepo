@@ -36,7 +36,7 @@
 
 #include <gst/base/base.h>
 
-#define IMAGE_MINSZ 4096
+#define IMAGE_MINSZ (256*1024)  /* 256kB */
 
 GST_DEBUG_CATEGORY (v4l2_decoder_debug);
 #define GST_CAT_DEFAULT v4l2_decoder_debug
@@ -87,6 +87,9 @@ struct _GstV4l2Decoder
   gchar *media_device;
   gchar *video_device;
   guint render_delay;
+
+  /* detected features */
+  gboolean supports_holding_capture;
 };
 
 G_DEFINE_TYPE_WITH_CODE (GstV4l2Decoder, gst_v4l2_decoder, GST_TYPE_OBJECT,
@@ -114,6 +117,7 @@ gst_v4l2_decoder_finalize (GObject * obj)
   g_free (self->media_device);
   g_free (self->video_device);
   gst_queue_array_free (self->request_pool);
+  gst_queue_array_free (self->pending_requests);
 
   G_OBJECT_CLASS (gst_v4l2_decoder_parent_class)->finalize (obj);
 }
@@ -352,6 +356,79 @@ gst_v4l2_decoder_set_sink_fmt (GstV4l2Decoder * self, guint32 pix_fmt,
   return TRUE;
 }
 
+static GstCaps *
+gst_v4l2_decoder_enum_size_for_format (GstV4l2Decoder * self,
+    guint32 pixelformat, gint index, gint unscaled_width, gint unscaled_height)
+{
+  struct v4l2_frmsizeenum size;
+  GstVideoFormat format;
+  gint ret;
+  gboolean res;
+
+  memset (&size, 0, sizeof (struct v4l2_frmsizeenum));
+  size.index = index;
+  size.pixel_format = pixelformat;
+
+  GST_DEBUG_OBJECT (self, "enumerate size index %d for %" GST_FOURCC_FORMAT,
+      index, GST_FOURCC_ARGS (pixelformat));
+
+  ret = ioctl (self->video_fd, VIDIOC_ENUM_FRAMESIZES, &size);
+
+  if (ret < 0)
+    return NULL;
+
+  if (size.type != V4L2_FRMSIZE_TYPE_DISCRETE) {
+    GST_WARNING_OBJECT (self, "V4L2_FRMSIZE type not supported");
+    return NULL;
+  }
+
+  if (gst_util_fraction_compare (unscaled_width, unscaled_height,
+          size.discrete.width, size.discrete.height)) {
+    GST_DEBUG_OBJECT (self,
+        "Pixel ratio modification not supported %dx%d %dx%d (%d)",
+        unscaled_width, unscaled_height, size.discrete.width,
+        size.discrete.height, ret);
+    return NULL;
+  }
+
+  res = gst_v4l2_format_to_video_format (pixelformat, &format);
+  g_assert (res);
+
+  GST_DEBUG_OBJECT (self, "get size (%d x %d) index %d for %" GST_FOURCC_FORMAT,
+      size.discrete.width, size.discrete.height, index,
+      GST_FOURCC_ARGS (pixelformat));
+
+  return gst_caps_new_simple ("video/x-raw", "format", G_TYPE_STRING,
+      gst_video_format_to_string (format),
+      "width", G_TYPE_INT, size.discrete.width,
+      "height", G_TYPE_INT, size.discrete.height, NULL);
+}
+
+static GstCaps *
+gst_v4l2_decoder_probe_caps_for_format (GstV4l2Decoder * self,
+    guint32 pixelformat, gint unscaled_width, gint unscaled_height)
+{
+  gint index = 0;
+  GstCaps *caps, *tmp;
+  GstVideoFormat format;
+
+  GST_DEBUG_OBJECT (self, "enumerate size for %" GST_FOURCC_FORMAT,
+      GST_FOURCC_ARGS (pixelformat));
+
+  if (!gst_v4l2_format_to_video_format (pixelformat, &format))
+    return gst_caps_new_empty ();
+
+  caps = gst_caps_new_simple ("video/x-raw", "format", G_TYPE_STRING,
+      gst_video_format_to_string (format), NULL);
+
+  while ((tmp = gst_v4l2_decoder_enum_size_for_format (self, pixelformat,
+              index++, unscaled_width, unscaled_height))) {
+    caps = gst_caps_merge (caps, tmp);
+  }
+
+  return caps;
+}
+
 GstCaps *
 gst_v4l2_decoder_enum_src_formats (GstV4l2Decoder * self)
 {
@@ -359,10 +436,7 @@ gst_v4l2_decoder_enum_src_formats (GstV4l2Decoder * self)
   struct v4l2_format fmt = {
     .type = self->src_buf_type,
   };
-  GstVideoFormat format;
   GstCaps *caps;
-  GValue list = G_VALUE_INIT;
-  GValue value = G_VALUE_INIT;
   gint i;
 
   g_return_val_if_fail (self->opened, FALSE);
@@ -373,20 +447,15 @@ gst_v4l2_decoder_enum_src_formats (GstV4l2Decoder * self)
     return FALSE;
   }
 
-  /* We first place a structure with the default pixel format */
-  if (gst_v4l2_format_to_video_format (fmt.fmt.pix_mp.pixelformat, &format))
-    caps = gst_caps_new_simple ("video/x-raw", "format", G_TYPE_STRING,
-        gst_video_format_to_string (format), NULL);
-  else
-    caps = gst_caps_new_empty ();
+  caps =
+      gst_v4l2_decoder_probe_caps_for_format (self,
+      fmt.fmt.pix_mp.pixelformat, fmt.fmt.pix_mp.width, fmt.fmt.pix_mp.height);
 
   /* And then enumerate other possible formats and place that as a second
    * structure in the caps */
-  g_value_init (&list, GST_TYPE_LIST);
-  g_value_init (&value, G_TYPE_STRING);
-
   for (i = 0; ret >= 0; i++) {
     struct v4l2_fmtdesc fmtdesc = { i, self->src_buf_type, };
+    GstCaps *tmp;
 
     ret = ioctl (self->video_fd, VIDIOC_ENUM_FMT, &fmtdesc);
     if (ret < 0) {
@@ -396,19 +465,9 @@ gst_v4l2_decoder_enum_src_formats (GstV4l2Decoder * self)
       continue;
     }
 
-    if (gst_v4l2_format_to_video_format (fmtdesc.pixelformat, &format)) {
-      g_value_set_static_string (&value, gst_video_format_to_string (format));
-      gst_value_list_append_value (&list, &value);
-    }
-  }
-  g_value_reset (&value);
-
-  if (gst_value_list_get_size (&list) > 0) {
-    GstStructure *str = gst_structure_new_empty ("video/x-raw");
-    gst_structure_take_value (str, "format", &list);
-    gst_caps_append_structure (caps, str);
-  } else {
-    g_value_reset (&list);
+    tmp = gst_v4l2_decoder_probe_caps_for_format (self, fmtdesc.pixelformat,
+        fmt.fmt.pix_mp.width, fmt.fmt.pix_mp.height);
+    caps = gst_caps_merge (caps, tmp);
   }
 
   return caps;
@@ -485,6 +544,13 @@ gst_v4l2_decoder_request_buffers (GstV4l2Decoder * self,
   if (ret < 0) {
     GST_ERROR_OBJECT (self, "VIDIOC_REQBUFS failed: %s", g_strerror (errno));
     return ret;
+  }
+
+  if (direction == GST_PAD_SINK) {
+    if (reqbufs.capabilities & V4L2_BUF_CAP_SUPPORTS_M2M_HOLD_CAPTURE_BUF)
+      self->supports_holding_capture = TRUE;
+    else
+      self->supports_holding_capture = FALSE;
   }
 
   return reqbufs.count;
@@ -574,7 +640,8 @@ gst_v4l2_decoder_queue_sink_mem (GstV4l2Decoder * self,
     .type = self->sink_buf_type,
     .memory = V4L2_MEMORY_MMAP,
     .index = gst_v4l2_codec_memory_get_index (mem),
-    .timestamp.tv_usec = frame_num,
+    .timestamp.tv_sec = frame_num / 1000000,
+    .timestamp.tv_usec = frame_num % 1000000,
     .request_fd = request->fd,
     .flags = V4L2_BUF_FLAG_REQUEST_FD | flags,
   };
@@ -681,7 +748,7 @@ gst_v4l2_decoder_dequeue_src (GstV4l2Decoder * self, guint32 * out_frame_num)
     return FALSE;
   }
 
-  *out_frame_num = buf.timestamp.tv_usec;
+  *out_frame_num = buf.timestamp.tv_usec + buf.timestamp.tv_sec * 1000000;
 
   GST_TRACE_OBJECT (self, "Dequeued picture buffer %i", buf.index);
 
@@ -1052,7 +1119,7 @@ gst_v4l2_request_unref (GstV4l2Request * request)
   if (request->pending) {
     gint idx;
 
-    GST_DEBUG_OBJECT (decoder, "Freeing pending request %p.", request);
+    GST_DEBUG_OBJECT (decoder, "Freeing pending request %i.", request->fd);
 
     idx = gst_queue_array_find (decoder->pending_requests, NULL, request);
     if (idx >= 0)
@@ -1062,7 +1129,7 @@ gst_v4l2_request_unref (GstV4l2Request * request)
     return;
   }
 
-  GST_TRACE_OBJECT (decoder, "Recycling request %p.", request);
+  GST_TRACE_OBJECT (decoder, "Recycling request %i.", request->fd);
 
   ret = ioctl (request->fd, MEDIA_REQUEST_IOC_REINIT, NULL);
   if (ret < 0) {
@@ -1083,7 +1150,16 @@ gst_v4l2_request_queue (GstV4l2Request * request, guint flags)
   gint ret;
   guint max_pending;
 
-  GST_TRACE_OBJECT (decoder, "Queuing request %p.", request);
+  GST_TRACE_OBJECT (decoder, "Queuing request %i.", request->fd);
+
+  /* this would lead to stalls if we tried to use this feature and it wasn't
+   * supported. */
+  if ((flags & V4L2_BUF_FLAG_M2M_HOLD_CAPTURE_BUF)
+      && !decoder->supports_holding_capture) {
+    GST_ERROR_OBJECT (decoder,
+        "Driver does not support holding capture buffer.");
+    return FALSE;
+  }
 
   if (!gst_v4l2_decoder_queue_sink_mem (decoder, request,
           request->bitstream, request->frame_num, flags)) {
@@ -1133,15 +1209,18 @@ gst_v4l2_request_set_done (GstV4l2Request * request)
   if (!request->pending)
     return 1;
 
+  GST_DEBUG_OBJECT (decoder, "Waiting for request %i to complete.",
+      request->fd);
+
   ret = gst_poll_wait (request->poll, GST_SECOND);
   if (ret == 0) {
-    GST_WARNING_OBJECT (decoder, "Request %p took too long.", request);
+    GST_WARNING_OBJECT (decoder, "Request %i took too long.", request->fd);
     return 0;
   }
 
   if (ret < 0) {
-    GST_WARNING_OBJECT (decoder, "Request %p error: %s (%i)",
-        request, g_strerror (errno), errno);
+    GST_WARNING_OBJECT (decoder, "Request %i error: %s (%i)",
+        request->fd, g_strerror (errno), errno);
     return ret;
   }
 
@@ -1185,4 +1264,10 @@ GstBuffer *
 gst_v4l2_request_dup_pic_buf (GstV4l2Request * request)
 {
   return gst_buffer_ref (request->pic_buf);
+}
+
+gint
+gst_v4l2_request_get_fd (GstV4l2Request * request)
+{
+  return request->fd;
 }

@@ -7,6 +7,7 @@
                 "description": "libav 4xm decoder",
                 "hierarchy": [
                     "avdec_4xm",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -96,6 +97,7 @@
                 "description": "libav 8bps decoder",
                 "hierarchy": [
                     "avdec_8bps",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -325,6 +327,7 @@
                 "description": "libav aasc decoder",
                 "hierarchy": [
                     "avdec_aasc",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -1805,6 +1808,7 @@
                 "description": "libav agm decoder",
                 "hierarchy": [
                     "avdec_agm",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -1894,6 +1898,7 @@
                 "description": "libav aic decoder",
                 "hierarchy": [
                     "avdec_aic",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -2037,6 +2042,7 @@
                 "description": "libav alias_pix decoder",
                 "hierarchy": [
                     "avdec_alias_pix",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -2210,6 +2216,7 @@
                 "description": "libav amv decoder",
                 "hierarchy": [
                     "avdec_amv",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -2299,6 +2306,7 @@
                 "description": "libav anm decoder",
                 "hierarchy": [
                     "avdec_anm",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -2388,6 +2396,7 @@
                 "description": "libav ansi decoder",
                 "hierarchy": [
                     "avdec_ansi",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -2505,6 +2514,7 @@
                 "description": "libav apng decoder",
                 "hierarchy": [
                     "avdec_apng",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -2676,6 +2686,7 @@
                 "description": "libav arbc decoder",
                 "hierarchy": [
                     "avdec_arbc",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -2854,6 +2865,7 @@
                 "description": "libav asv1 decoder",
                 "hierarchy": [
                     "avdec_asv1",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -2943,6 +2955,7 @@
                 "description": "libav asv2 decoder",
                 "hierarchy": [
                     "avdec_asv2",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -3200,6 +3213,7 @@
                 "description": "libav aura decoder",
                 "hierarchy": [
                     "avdec_aura",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -3289,6 +3303,7 @@
                 "description": "libav aura2 decoder",
                 "hierarchy": [
                     "avdec_aura2",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -3467,6 +3482,7 @@
                 "description": "libav avrn decoder",
                 "hierarchy": [
                     "avdec_avrn",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -3556,6 +3572,7 @@
                 "description": "libav avrp decoder",
                 "hierarchy": [
                     "avdec_avrp",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -3645,6 +3662,7 @@
                 "description": "libav avs decoder",
                 "hierarchy": [
                     "avdec_avs",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -3734,6 +3752,7 @@
                 "description": "libav avui decoder",
                 "hierarchy": [
                     "avdec_avui",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -3823,6 +3842,7 @@
                 "description": "libav bethsoftvid decoder",
                 "hierarchy": [
                     "avdec_bethsoftvid",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -3912,6 +3932,7 @@
                 "description": "libav bfi decoder",
                 "hierarchy": [
                     "avdec_bfi",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -4057,6 +4078,7 @@
                 "description": "libav binkvideo decoder",
                 "hierarchy": [
                     "avdec_binkvideo",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -4146,6 +4168,7 @@
                 "description": "libav bintext decoder",
                 "hierarchy": [
                     "avdec_bintext",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -4235,6 +4258,7 @@
                 "description": "libav bitpacked decoder",
                 "hierarchy": [
                     "avdec_bitpacked",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -4324,6 +4348,7 @@
                 "description": "libav bmp decoder",
                 "hierarchy": [
                     "avdec_bmp",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -4441,6 +4466,7 @@
                 "description": "libav bmv_video decoder",
                 "hierarchy": [
                     "avdec_bmv_video",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -4530,6 +4556,7 @@
                 "description": "libav brender_pix decoder",
                 "hierarchy": [
                     "avdec_brender_pix",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -4619,6 +4646,7 @@
                 "description": "libav c93 decoder",
                 "hierarchy": [
                     "avdec_c93",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -4708,6 +4736,7 @@
                 "description": "libav camstudio decoder",
                 "hierarchy": [
                     "avdec_camstudio",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -4797,6 +4826,7 @@
                 "description": "libav camtasia decoder",
                 "hierarchy": [
                     "avdec_camtasia",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -4886,6 +4916,7 @@
                 "description": "libav cavs decoder",
                 "hierarchy": [
                     "avdec_cavs",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -5064,6 +5095,7 @@
                 "description": "libav cdxl decoder",
                 "hierarchy": [
                     "avdec_cdxl",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -5153,6 +5185,7 @@
                 "description": "libav cfhd decoder",
                 "hierarchy": [
                     "avdec_cfhd",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -5268,6 +5301,7 @@
                 "description": "libav cinepak decoder",
                 "hierarchy": [
                     "avdec_cinepak",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -5357,6 +5391,7 @@
                 "description": "libav clearvideo decoder",
                 "hierarchy": [
                     "avdec_clearvideo",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -5446,6 +5481,7 @@
                 "description": "libav cljr decoder",
                 "hierarchy": [
                     "avdec_cljr",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -5535,6 +5571,7 @@
                 "description": "libav cllc decoder",
                 "hierarchy": [
                     "avdec_cllc",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -5706,6 +5743,7 @@
                 "description": "libav cpia decoder",
                 "hierarchy": [
                     "avdec_cpia",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -5910,6 +5948,7 @@
                 "description": "libav cyuv decoder",
                 "hierarchy": [
                     "avdec_cyuv",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -6027,6 +6066,7 @@
                 "description": "libav dds decoder",
                 "hierarchy": [
                     "avdec_dds",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -6169,6 +6209,7 @@
                 "description": "libav dfa decoder",
                 "hierarchy": [
                     "avdec_dfa",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -6258,6 +6299,7 @@
                 "description": "libav dirac decoder",
                 "hierarchy": [
                     "avdec_dirac",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -6373,6 +6415,7 @@
                 "description": "libav dnxhd decoder",
                 "hierarchy": [
                     "avdec_dnxhd",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -6516,6 +6559,7 @@
                 "description": "libav dpx decoder",
                 "hierarchy": [
                     "avdec_dpx",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -6745,6 +6789,7 @@
                 "description": "libav dsicinvideo decoder",
                 "hierarchy": [
                     "avdec_dsicinvideo",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -6918,6 +6963,7 @@
                 "description": "libav dvvideo decoder",
                 "hierarchy": [
                     "avdec_dvvideo",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -7033,6 +7079,7 @@
                 "description": "libav dxa decoder",
                 "hierarchy": [
                     "avdec_dxa",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -7122,6 +7169,7 @@
                 "description": "libav dxtory decoder",
                 "hierarchy": [
                     "avdec_dxtory",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -7237,6 +7285,7 @@
                 "description": "libav dxv decoder",
                 "hierarchy": [
                     "avdec_dxv",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -7380,6 +7429,7 @@
                 "description": "libav eacmv decoder",
                 "hierarchy": [
                     "avdec_eacmv",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -7469,6 +7519,7 @@
                 "description": "libav eamad decoder",
                 "hierarchy": [
                     "avdec_eamad",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -7558,6 +7609,7 @@
                 "description": "libav eatgq decoder",
                 "hierarchy": [
                     "avdec_eatgq",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -7647,6 +7699,7 @@
                 "description": "libav eatgv decoder",
                 "hierarchy": [
                     "avdec_eatgv",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -7736,6 +7789,7 @@
                 "description": "libav eatqi decoder",
                 "hierarchy": [
                     "avdec_eatqi",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -7825,6 +7879,7 @@
                 "description": "libav escape124 decoder",
                 "hierarchy": [
                     "avdec_escape124",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -7914,6 +7969,7 @@
                 "description": "libav escape130 decoder",
                 "hierarchy": [
                     "avdec_escape130",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -8031,6 +8087,7 @@
                 "description": "libav exr decoder",
                 "hierarchy": [
                     "avdec_exr",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -8173,6 +8230,7 @@
                 "description": "libav ffv1 decoder",
                 "hierarchy": [
                     "avdec_ffv1",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -8288,6 +8346,7 @@
                 "description": "libav ffvhuff decoder",
                 "hierarchy": [
                     "avdec_ffvhuff",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -8403,6 +8462,7 @@
                 "description": "libav fic decoder",
                 "hierarchy": [
                     "avdec_fic",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -8518,6 +8578,7 @@
                 "description": "libav fits decoder",
                 "hierarchy": [
                     "avdec_fits",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -8635,6 +8696,7 @@
                 "description": "libav flashsv decoder",
                 "hierarchy": [
                     "avdec_flashsv",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -8724,6 +8786,7 @@
                 "description": "libav flashsv2 decoder",
                 "hierarchy": [
                     "avdec_flashsv2",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -8813,6 +8876,7 @@
                 "description": "libav flic decoder",
                 "hierarchy": [
                     "avdec_flic",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -8902,6 +8966,7 @@
                 "description": "libav flv decoder",
                 "hierarchy": [
                     "avdec_flv",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -8991,6 +9056,7 @@
                 "description": "libav fmvc decoder",
                 "hierarchy": [
                     "avdec_fmvc",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -9080,6 +9146,7 @@
                 "description": "libav fraps decoder",
                 "hierarchy": [
                     "avdec_fraps",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -9195,6 +9262,7 @@
                 "description": "libav frwu decoder",
                 "hierarchy": [
                     "avdec_frwu",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -9284,6 +9352,7 @@
                 "description": "libav g2m decoder",
                 "hierarchy": [
                     "avdec_g2m",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -9513,6 +9582,7 @@
                 "description": "libav gdv decoder",
                 "hierarchy": [
                     "avdec_gdv",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -9602,6 +9672,7 @@
                 "description": "libav gif decoder",
                 "hierarchy": [
                     "avdec_gif",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -9775,6 +9846,7 @@
                 "description": "libav h261 decoder",
                 "hierarchy": [
                     "avdec_h261",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -9864,6 +9936,7 @@
                 "description": "libav h263 decoder",
                 "hierarchy": [
                     "avdec_h263",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -9953,6 +10026,7 @@
                 "description": "libav h263i decoder",
                 "hierarchy": [
                     "avdec_h263i",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -10042,6 +10116,7 @@
                 "description": "libav h263p decoder",
                 "hierarchy": [
                     "avdec_h263p",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -10131,6 +10206,7 @@
                 "description": "libav h264 decoder",
                 "hierarchy": [
                     "avdec_h264",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -10246,6 +10322,7 @@
                 "description": "libav hevc decoder",
                 "hierarchy": [
                     "avdec_h265",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -10361,6 +10438,7 @@
                 "description": "libav hap decoder",
                 "hierarchy": [
                     "avdec_hap",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -10531,6 +10609,7 @@
                 "description": "libav hnm4video decoder",
                 "hierarchy": [
                     "avdec_hnm4video",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -10620,6 +10699,7 @@
                 "description": "libav hq_hqa decoder",
                 "hierarchy": [
                     "avdec_hq_hqa",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -10709,6 +10789,7 @@
                 "description": "libav hqx decoder",
                 "hierarchy": [
                     "avdec_hqx",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -10824,6 +10905,7 @@
                 "description": "libav huffyuv decoder",
                 "hierarchy": [
                     "avdec_huffyuv",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -10939,6 +11021,7 @@
                 "description": "libav hymt decoder",
                 "hierarchy": [
                     "avdec_hymt",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -11082,6 +11165,7 @@
                 "description": "libav idcinvideo decoder",
                 "hierarchy": [
                     "avdec_idcinvideo",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -11171,6 +11255,7 @@
                 "description": "libav idf decoder",
                 "hierarchy": [
                     "avdec_idf",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -11260,6 +11345,7 @@
                 "description": "libav iff decoder",
                 "hierarchy": [
                     "avdec_iff",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -11405,6 +11491,7 @@
                 "description": "libav imm4 decoder",
                 "hierarchy": [
                     "avdec_imm4",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -11583,6 +11670,7 @@
                 "description": "libav indeo2 decoder",
                 "hierarchy": [
                     "avdec_indeo2",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -11672,6 +11760,7 @@
                 "description": "libav indeo3 decoder",
                 "hierarchy": [
                     "avdec_indeo3",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -11761,6 +11850,7 @@
                 "description": "libav indeo4 decoder",
                 "hierarchy": [
                     "avdec_indeo4",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -11850,6 +11940,7 @@
                 "description": "libav indeo5 decoder",
                 "hierarchy": [
                     "avdec_indeo5",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -11995,6 +12086,7 @@
                 "description": "libav interplayvideo decoder",
                 "hierarchy": [
                     "avdec_interplayvideo",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -12173,6 +12265,7 @@
                 "description": "libav jpeg2000 decoder",
                 "hierarchy": [
                     "avdec_jpeg2000",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -12288,6 +12381,7 @@
                 "description": "libav jpegls decoder",
                 "hierarchy": [
                     "avdec_jpegls",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -12377,6 +12471,7 @@
                 "description": "libav jv decoder",
                 "hierarchy": [
                     "avdec_jv",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -12466,6 +12561,7 @@
                 "description": "libav kgv1 decoder",
                 "hierarchy": [
                     "avdec_kgv1",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -12555,6 +12651,7 @@
                 "description": "libav kmvc decoder",
                 "hierarchy": [
                     "avdec_kmvc",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -12644,6 +12741,7 @@
                 "description": "libav lagarith decoder",
                 "hierarchy": [
                     "avdec_lagarith",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -12759,6 +12857,7 @@
                 "description": "libav loco decoder",
                 "hierarchy": [
                     "avdec_loco",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -12848,6 +12947,7 @@
                 "description": "libav lscr decoder",
                 "hierarchy": [
                     "avdec_lscr",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -12937,6 +13037,7 @@
                 "description": "libav m101 decoder",
                 "hierarchy": [
                     "avdec_m101",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -13082,6 +13183,7 @@
                 "description": "libav magicyuv decoder",
                 "hierarchy": [
                     "avdec_magicyuv",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -13197,6 +13299,7 @@
                 "description": "libav mdec decoder",
                 "hierarchy": [
                     "avdec_mdec",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -13340,6 +13443,7 @@
                 "description": "libav mimic decoder",
                 "hierarchy": [
                     "avdec_mimic",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -13455,6 +13559,7 @@
                 "description": "libav mjpeg decoder",
                 "hierarchy": [
                     "avdec_mjpeg",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -13544,6 +13649,7 @@
                 "description": "libav mjpegb decoder",
                 "hierarchy": [
                     "avdec_mjpegb",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -13661,6 +13767,7 @@
                 "description": "libav mmvideo decoder",
                 "hierarchy": [
                     "avdec_mmvideo",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -13839,6 +13946,7 @@
                 "description": "libav motionpixels decoder",
                 "hierarchy": [
                     "avdec_motionpixels",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -14173,7 +14281,7 @@
                     }
                 },
                 "properties": {},
-                "rank": "marginal"
+                "rank": "primary"
             },
             "avdec_mpc8": {
                 "author": "Wim Taymans <wim.taymans@gmail.com>, Ronald Bultje <rbultje@ronald.bitfreak.net>, Edward Hervey <bilboed@bilboed.com>",
@@ -14201,13 +14309,14 @@
                     }
                 },
                 "properties": {},
-                "rank": "marginal"
+                "rank": "primary"
             },
             "avdec_mpeg2video": {
                 "author": "Wim Taymans <wim.taymans@gmail.com>, Ronald Bultje <rbultje@ronald.bitfreak.net>, Edward Hervey <bilboed@bilboed.com>",
                 "description": "libav mpeg2video decoder",
                 "hierarchy": [
                     "avdec_mpeg2video",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -14323,6 +14432,7 @@
                 "description": "libav mpeg4 decoder",
                 "hierarchy": [
                     "avdec_mpeg4",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -14438,6 +14548,7 @@
                 "description": "libav mpegvideo decoder",
                 "hierarchy": [
                     "avdec_mpegvideo",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -14553,6 +14664,7 @@
                 "description": "libav msa1 decoder",
                 "hierarchy": [
                     "avdec_msa1",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -14642,6 +14754,7 @@
                 "description": "libav mscc decoder",
                 "hierarchy": [
                     "avdec_mscc",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -14731,6 +14844,7 @@
                 "description": "libav msmpeg4 decoder",
                 "hierarchy": [
                     "avdec_msmpeg4",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -14820,6 +14934,7 @@
                 "description": "libav msmpeg4v1 decoder",
                 "hierarchy": [
                     "avdec_msmpeg4v1",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -14909,6 +15024,7 @@
                 "description": "libav msmpeg4v2 decoder",
                 "hierarchy": [
                     "avdec_msmpeg4v2",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -15087,6 +15203,7 @@
                 "description": "libav msrle decoder",
                 "hierarchy": [
                     "avdec_msrle",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -15176,6 +15293,7 @@
                 "description": "libav mss1 decoder",
                 "hierarchy": [
                     "avdec_mss1",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -15265,6 +15383,7 @@
                 "description": "libav mss2 decoder",
                 "hierarchy": [
                     "avdec_mss2",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -15354,6 +15473,7 @@
                 "description": "libav msvideo1 decoder",
                 "hierarchy": [
                     "avdec_msvideo1",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -15443,6 +15563,7 @@
                 "description": "libav mszh decoder",
                 "hierarchy": [
                     "avdec_mszh",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -15558,6 +15679,7 @@
                 "description": "libav mts2 decoder",
                 "hierarchy": [
                     "avdec_mts2",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -15736,6 +15858,7 @@
                 "description": "libav mvc1 decoder",
                 "hierarchy": [
                     "avdec_mvc1",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -15825,6 +15948,7 @@
                 "description": "libav mvc2 decoder",
                 "hierarchy": [
                     "avdec_mvc2",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -16092,6 +16216,7 @@
                 "description": "libav mwsc decoder",
                 "hierarchy": [
                     "avdec_mwsc",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -16181,6 +16306,7 @@
                 "description": "libav mxpeg decoder",
                 "hierarchy": [
                     "avdec_mxpeg",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -16413,6 +16539,7 @@
                 "description": "libav nuv decoder",
                 "hierarchy": [
                     "avdec_nuv",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -16586,6 +16713,7 @@
                 "description": "libav paf_video decoder",
                 "hierarchy": [
                     "avdec_paf_video",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -16675,6 +16803,7 @@
                 "description": "libav pam decoder",
                 "hierarchy": [
                     "avdec_pam",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -16764,6 +16893,7 @@
                 "description": "libav pbm decoder",
                 "hierarchy": [
                     "avdec_pbm",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -16936,6 +17066,7 @@
                 "description": "libav pcx decoder",
                 "hierarchy": [
                     "avdec_pcx",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -17114,6 +17245,7 @@
                 "description": "libav pgm decoder",
                 "hierarchy": [
                     "avdec_pgm",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -17203,6 +17335,7 @@
                 "description": "libav pgmyuv decoder",
                 "hierarchy": [
                     "avdec_pgmyuv",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -17496,6 +17629,7 @@
                 "description": "libav pictor decoder",
                 "hierarchy": [
                     "avdec_pictor",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -17585,6 +17719,7 @@
                 "description": "libav pixlet decoder",
                 "hierarchy": [
                     "avdec_pixlet",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -17700,6 +17835,7 @@
                 "description": "libav png decoder",
                 "hierarchy": [
                     "avdec_png",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -17815,6 +17951,7 @@
                 "description": "libav ppm decoder",
                 "hierarchy": [
                     "avdec_ppm",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -17904,6 +18041,7 @@
                 "description": "libav prores decoder",
                 "hierarchy": [
                     "avdec_prores",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -18019,6 +18157,7 @@
                 "description": "libav prosumer decoder",
                 "hierarchy": [
                     "avdec_prosumer",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -18108,6 +18247,7 @@
                 "description": "libav psd decoder",
                 "hierarchy": [
                     "avdec_psd",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -18223,6 +18363,7 @@
                 "description": "libav ptx decoder",
                 "hierarchy": [
                     "avdec_ptx",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -18396,6 +18537,7 @@
                 "description": "libav qdraw decoder",
                 "hierarchy": [
                     "avdec_qdraw",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -18485,6 +18627,7 @@
                 "description": "libav qpeg decoder",
                 "hierarchy": [
                     "avdec_qpeg",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -18574,6 +18717,7 @@
                 "description": "libav qtrle decoder",
                 "hierarchy": [
                     "avdec_qtrle",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -18663,6 +18807,7 @@
                 "description": "libav r10k decoder",
                 "hierarchy": [
                     "avdec_r10k",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -18780,6 +18925,7 @@
                 "description": "libav rasc decoder",
                 "hierarchy": [
                     "avdec_rasc",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -18925,6 +19071,7 @@
                 "description": "libav rl2 decoder",
                 "hierarchy": [
                     "avdec_rl2",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -19042,6 +19189,7 @@
                 "description": "libav roqvideo decoder",
                 "hierarchy": [
                     "avdec_roqvideo",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -19131,6 +19279,7 @@
                 "description": "libav rpza decoder",
                 "hierarchy": [
                     "avdec_rpza",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -19220,6 +19369,7 @@
                 "description": "libav rscc decoder",
                 "hierarchy": [
                     "avdec_rscc",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -19309,6 +19459,7 @@
                 "description": "libav rv10 decoder",
                 "hierarchy": [
                     "avdec_rv10",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -19398,6 +19549,7 @@
                 "description": "libav rv20 decoder",
                 "hierarchy": [
                     "avdec_rv20",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -19487,6 +19639,7 @@
                 "description": "libav rv30 decoder",
                 "hierarchy": [
                     "avdec_rv30",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -19602,6 +19755,7 @@
                 "description": "libav rv40 decoder",
                 "hierarchy": [
                     "avdec_rv40",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -19745,6 +19899,7 @@
                 "description": "libav sanm decoder",
                 "hierarchy": [
                     "avdec_sanm",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -19862,6 +20017,7 @@
                 "description": "libav scpr decoder",
                 "hierarchy": [
                     "avdec_scpr",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -19951,6 +20107,7 @@
                 "description": "libav screenpresso decoder",
                 "hierarchy": [
                     "avdec_screenpresso",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -20157,6 +20314,7 @@
                 "description": "libav sgi decoder",
                 "hierarchy": [
                     "avdec_sgi",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -20246,6 +20404,7 @@
                 "description": "libav sgirle decoder",
                 "hierarchy": [
                     "avdec_sgirle",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -20335,6 +20494,7 @@
                 "description": "libav sheervideo decoder",
                 "hierarchy": [
                     "avdec_sheervideo",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -20650,6 +20810,7 @@
                 "description": "libav smackvid decoder",
                 "hierarchy": [
                     "avdec_smackvid",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -20739,6 +20900,7 @@
                 "description": "libav smc decoder",
                 "hierarchy": [
                     "avdec_smc",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -20828,6 +20990,7 @@
                 "description": "libav smvjpeg decoder",
                 "hierarchy": [
                     "avdec_smvjpeg",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -20917,6 +21080,7 @@
                 "description": "libav snow decoder",
                 "hierarchy": [
                     "avdec_snow",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -21062,6 +21226,7 @@
                 "description": "libav sp5x decoder",
                 "hierarchy": [
                     "avdec_sp5x",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -21151,6 +21316,7 @@
                 "description": "libav speedhq decoder",
                 "hierarchy": [
                     "avdec_speedhq",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -21240,6 +21406,7 @@
                 "description": "libav srgc decoder",
                 "hierarchy": [
                     "avdec_srgc",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -21329,6 +21496,7 @@
                 "description": "libav sunrast decoder",
                 "hierarchy": [
                     "avdec_sunrast",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -21418,6 +21586,7 @@
                 "description": "libav svq1 decoder",
                 "hierarchy": [
                     "avdec_svq1",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -21507,6 +21676,7 @@
                 "description": "libav svq3 decoder",
                 "hierarchy": [
                     "avdec_svq3",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -21624,6 +21794,7 @@
                 "description": "libav targa decoder",
                 "hierarchy": [
                     "avdec_targa",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -21713,6 +21884,7 @@
                 "description": "libav targa_y216 decoder",
                 "hierarchy": [
                     "avdec_targa_y216",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -21802,6 +21974,7 @@
                 "description": "libav tdsc decoder",
                 "hierarchy": [
                     "avdec_tdsc",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -21891,6 +22064,7 @@
                 "description": "libav thp decoder",
                 "hierarchy": [
                     "avdec_thp",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -21980,6 +22154,7 @@
                 "description": "libav tiertexseqvideo decoder",
                 "hierarchy": [
                     "avdec_tiertexseqvideo",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -22069,6 +22244,7 @@
                 "description": "libav tiff decoder",
                 "hierarchy": [
                     "avdec_tiff",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -22184,6 +22360,7 @@
                 "description": "libav tmv decoder",
                 "hierarchy": [
                     "avdec_tmv",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -22301,6 +22478,7 @@
                 "description": "libav truemotion1 decoder",
                 "hierarchy": [
                     "avdec_truemotion1",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -22390,6 +22568,7 @@
                 "description": "libav truemotion2 decoder",
                 "hierarchy": [
                     "avdec_truemotion2",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -22479,6 +22658,7 @@
                 "description": "libav truemotion2rt decoder",
                 "hierarchy": [
                     "avdec_truemotion2rt",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -22596,6 +22776,7 @@
                 "description": "libav tscc2 decoder",
                 "hierarchy": [
                     "avdec_tscc2",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -22741,6 +22922,7 @@
                 "description": "libav txd decoder",
                 "hierarchy": [
                     "avdec_txd",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -22830,6 +23012,7 @@
                 "description": "libav ultimotion decoder",
                 "hierarchy": [
                     "avdec_ultimotion",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -22919,6 +23102,7 @@
                 "description": "libav utvideo decoder",
                 "hierarchy": [
                     "avdec_utvideo",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -23034,6 +23218,7 @@
                 "description": "libav vb decoder",
                 "hierarchy": [
                     "avdec_vb",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -23123,6 +23308,7 @@
                 "description": "libav vble decoder",
                 "hierarchy": [
                     "avdec_vble",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -23238,6 +23424,7 @@
                 "description": "libav vc1 decoder",
                 "hierarchy": [
                     "avdec_vc1",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -23327,6 +23514,7 @@
                 "description": "libav vc1image decoder",
                 "hierarchy": [
                     "avdec_vc1image",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -23416,6 +23604,7 @@
                 "description": "libav vcr1 decoder",
                 "hierarchy": [
                     "avdec_vcr1",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -23533,6 +23722,7 @@
                 "description": "libav vmdvideo decoder",
                 "hierarchy": [
                     "avdec_vmdvideo",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -23622,6 +23812,7 @@
                 "description": "libav vmnc decoder",
                 "hierarchy": [
                     "avdec_vmnc",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -23711,6 +23902,7 @@
                 "description": "libav vp3 decoder",
                 "hierarchy": [
                     "avdec_vp3",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -23826,6 +24018,7 @@
                 "description": "libav vp4 decoder",
                 "hierarchy": [
                     "avdec_vp4",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -23941,6 +24134,7 @@
                 "description": "libav vp5 decoder",
                 "hierarchy": [
                     "avdec_vp5",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -24030,6 +24224,7 @@
                 "description": "libav vp6 decoder",
                 "hierarchy": [
                     "avdec_vp6",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -24119,6 +24314,7 @@
                 "description": "libav vp6a decoder",
                 "hierarchy": [
                     "avdec_vp6a",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -24234,6 +24430,7 @@
                 "description": "libav vp6f decoder",
                 "hierarchy": [
                     "avdec_vp6f",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -24323,6 +24520,7 @@
                 "description": "libav vp7 decoder",
                 "hierarchy": [
                     "avdec_vp7",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -24412,6 +24610,7 @@
                 "description": "libav vp8 decoder",
                 "hierarchy": [
                     "avdec_vp8",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -24527,6 +24726,7 @@
                 "description": "libav vp9 decoder",
                 "hierarchy": [
                     "avdec_vp9",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -24642,6 +24842,7 @@
                 "description": "libav vqavideo decoder",
                 "hierarchy": [
                     "avdec_vqavideo",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -24759,6 +24960,7 @@
                 "description": "libav wcmv decoder",
                 "hierarchy": [
                     "avdec_wcmv",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -24848,6 +25050,7 @@
                 "description": "libav webp decoder",
                 "hierarchy": [
                     "avdec_webp",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -25103,6 +25306,7 @@
                 "description": "libav wmv1 decoder",
                 "hierarchy": [
                     "avdec_wmv1",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -25192,6 +25396,7 @@
                 "description": "libav wmv2 decoder",
                 "hierarchy": [
                     "avdec_wmv2",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -25281,6 +25486,7 @@
                 "description": "libav wmv3 decoder",
                 "hierarchy": [
                     "avdec_wmv3",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -25370,6 +25576,7 @@
                 "description": "libav wmv3image decoder",
                 "hierarchy": [
                     "avdec_wmv3image",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -25459,6 +25666,7 @@
                 "description": "libav wnv1 decoder",
                 "hierarchy": [
                     "avdec_wnv1",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -25604,6 +25812,7 @@
                 "description": "libav xan_wc3 decoder",
                 "hierarchy": [
                     "avdec_xan_wc3",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -25693,6 +25902,7 @@
                 "description": "libav xan_wc4 decoder",
                 "hierarchy": [
                     "avdec_xan_wc4",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -25782,6 +25992,7 @@
                 "description": "libav xbin decoder",
                 "hierarchy": [
                     "avdec_xbin",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -25871,6 +26082,7 @@
                 "description": "libav xbm decoder",
                 "hierarchy": [
                     "avdec_xbm",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -25960,6 +26172,7 @@
                 "description": "libav xface decoder",
                 "hierarchy": [
                     "avdec_xface",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -26049,6 +26262,7 @@
                 "description": "libav xl decoder",
                 "hierarchy": [
                     "avdec_xl",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -26194,6 +26408,7 @@
                 "description": "libav xpm decoder",
                 "hierarchy": [
                     "avdec_xpm",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -26283,6 +26498,7 @@
                 "description": "libav xwd decoder",
                 "hierarchy": [
                     "avdec_xwd",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -26372,6 +26588,7 @@
                 "description": "libav ylc decoder",
                 "hierarchy": [
                     "avdec_ylc",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -26487,6 +26704,7 @@
                 "description": "libav yop decoder",
                 "hierarchy": [
                     "avdec_yop",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -26576,6 +26794,7 @@
                 "description": "libav zerocodec decoder",
                 "hierarchy": [
                     "avdec_zerocodec",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -26665,6 +26884,7 @@
                 "description": "libav zmbv decoder",
                 "hierarchy": [
                     "avdec_zmbv",
+                    "GstFFMpegVidDec",
                     "GstVideoDecoder",
                     "GstElement",
                     "GstObject",
@@ -27394,7 +27614,7 @@
                         "presence": "sometimes"
                     }
                 },
-                "rank": "marginal",
+                "rank": "secondary",
                 "signals": {}
             },
             "avdemux_mpc8": {
@@ -27426,7 +27646,7 @@
                         "presence": "sometimes"
                     }
                 },
-                "rank": "marginal",
+                "rank": "secondary",
                 "signals": {}
             },
             "avdemux_mxf": {
@@ -44016,7 +44236,7 @@
                 "long-name": "libav Avid 1:1 10-bit RGB Packer encoder",
                 "pad-templates": {
                     "sink": {
-                        "caps": "video/x-raw:\n",
+                        "caps": "video/x-raw:\n         format: GBR_10LE\n",
                         "direction": "sink",
                         "presence": "always"
                     },
@@ -64983,7 +65203,7 @@
                         "construct": false,
                         "construct-only": false,
                         "controllable": false,
-                        "default": "128000",
+                        "default": "6300",
                         "max": "2147483647",
                         "min": "0",
                         "mutable": "null",
@@ -100948,7 +101168,7 @@
                 "long-name": "libav Apple ProRes encoder",
                 "pad-templates": {
                     "sink": {
-                        "caps": "video/x-raw:\n         format: { I422_10LE, Y444_10LE }\n",
+                        "caps": "video/x-raw:\n         format: { I422_10LE, Y444_10LE, A444_10LE }\n",
                         "direction": "sink",
                         "presence": "always"
                     },
@@ -102118,7 +102338,7 @@
                 "long-name": "libav Apple ProRes encoder",
                 "pad-templates": {
                     "sink": {
-                        "caps": "video/x-raw:\n         format: { I422_10LE, Y444_10LE }\n",
+                        "caps": "video/x-raw:\n         format: { I422_10LE, Y444_10LE, A444_10LE }\n",
                         "direction": "sink",
                         "presence": "always"
                     },
@@ -105682,7 +105902,7 @@
                 "long-name": "libav AJA Kona 10-bit RGB Codec encoder",
                 "pad-templates": {
                     "sink": {
-                        "caps": "video/x-raw:\n",
+                        "caps": "video/x-raw:\n         format: GBR_10LE\n",
                         "direction": "sink",
                         "presence": "always"
                     },
@@ -134070,7 +134290,7 @@
                 "long-name": "libav Zip Motion Blocks Video encoder",
                 "pad-templates": {
                     "sink": {
-                        "caps": "video/x-raw:\n         format: RGB8P\n",
+                        "caps": "video/x-raw:\n         format: { RGB8P, RGB15, RGB16, BGRx }\n",
                         "direction": "sink",
                         "presence": "always"
                     },
@@ -140580,6 +140800,66 @@
         "filename": "gstlibav",
         "license": "LGPL",
         "other-types": {
+            "GstAvCodecCompliance": {
+                "kind": "enum",
+                "values": [
+                    {
+                        "desc": "The decoder automatically decides. If the pipeline is live, it will use `normal` mode, and `strict` otherwise.",
+                        "name": "auto",
+                        "value": "2147483647"
+                    },
+                    {
+                        "desc": "VeryStrict: Strictly conform to an older more strict version of the spec or reference software",
+                        "name": "very-strict",
+                        "value": "2"
+                    },
+                    {
+                        "desc": "Strict: Strictly conform to all the things in the spec no matter what consequences",
+                        "name": "strict",
+                        "value": "1"
+                    },
+                    {
+                        "desc": "Normal",
+                        "name": "normal",
+                        "value": "0"
+                    },
+                    {
+                        "desc": "Unofficial: Allow unofficial extensions (decoder will not differentiate this with \"normal\")",
+                        "name": "unofficial",
+                        "value": "-1"
+                    },
+                    {
+                        "desc": "Experimental: Allow nonstandardized experimental things (decoder will not differentiate this with \"normal\")",
+                        "name": "experimental",
+                        "value": "-2"
+                    }
+                ]
+            },
+            "GstFFMpegVidDec": {
+                "hierarchy": [
+                    "GstFFMpegVidDec",
+                    "GstVideoDecoder",
+                    "GstElement",
+                    "GstObject",
+                    "GInitiallyUnowned",
+                    "GObject"
+                ],
+                "kind": "object",
+                "properties": {
+                    "std-compliance": {
+                        "blurb": "Standard compliance mode to use",
+                        "conditionally-available": false,
+                        "construct": false,
+                        "construct-only": false,
+                        "controllable": false,
+                        "default": "auto (2147483647)",
+                        "mutable": "null",
+                        "readable": true,
+                        "type": "GstAvCodecCompliance",
+                        "writable": true
+                    }
+                }
+            },
             "GstLibAVDeinterlaceModes": {
                 "kind": "enum",
                 "values": [
@@ -141542,6 +141822,11 @@
                         "desc": "use 1/4-pel motion compensation",
                         "name": "qpel",
                         "value": "0x00000010"
+                    },
+                    {
+                        "desc": "Drop frames whose parameters differ from first decoded frame",
+                        "name": "drop_changed",
+                        "value": "0x00000020"
                     },
                     {
                         "desc": "use loop filter",

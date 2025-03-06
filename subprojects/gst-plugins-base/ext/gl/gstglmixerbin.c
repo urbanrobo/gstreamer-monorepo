@@ -315,6 +315,10 @@ _create_input_chain (GstGLMixerBin * self, struct input_chain *chain,
   res &= gst_bin_add (GST_BIN (self), chain->in_convert);
   res &= gst_bin_add (GST_BIN (self), chain->in_overlay);
   res &= gst_bin_add (GST_BIN (self), chain->upload);
+  if (!res) {
+    g_warn_if_reached ();
+    return FALSE;
+  }
 
   pad = gst_element_get_static_pad (chain->in_overlay, "src");
   if (gst_pad_link (pad, mixer_pad) != GST_PAD_LINK_OK) {
@@ -322,11 +326,15 @@ _create_input_chain (GstGLMixerBin * self, struct input_chain *chain,
     return FALSE;
   }
   gst_object_unref (pad);
-  res &=
-      gst_element_link_pads (chain->in_convert, "src", chain->in_overlay,
-      "sink");
-  res &=
-      gst_element_link_pads (chain->upload, "src", chain->in_convert, "sink");
+  if (!gst_element_link_pads (chain->in_convert, "src", chain->in_overlay,
+          "sink")) {
+    g_warn_if_reached ();
+    return FALSE;
+  }
+  if (!gst_element_link_pads (chain->upload, "src", chain->in_convert, "sink")) {
+    g_warn_if_reached ();
+    return FALSE;
+  }
 
   pad = gst_element_get_static_pad (chain->upload, "sink");
   if (!pad) {
@@ -367,23 +375,20 @@ _find_element_pad_template (GstElement * element,
 {
   GstElementClass *klass = GST_ELEMENT_GET_CLASS (element);
   GList *templ_list = gst_element_class_get_pad_template_list (klass);
-  GstPadTemplate *templ;
 
   /* find suitable template */
   while (templ_list) {
-    templ = (GstPadTemplate *) templ_list->data;
+    GstPadTemplate *templ = (GstPadTemplate *) templ_list->data;
 
-    if (GST_PAD_TEMPLATE_DIRECTION (templ) != direction
-        || GST_PAD_TEMPLATE_PRESENCE (templ) != presence) {
-      templ_list = templ_list->next;
-      templ = NULL;
-      continue;
+    if (GST_PAD_TEMPLATE_DIRECTION (templ) == direction
+        && GST_PAD_TEMPLATE_PRESENCE (templ) == presence) {
+      return templ;
     }
 
-    break;
+    templ_list = templ_list->next;
   }
 
-  return templ;
+  return NULL;
 }
 
 static gboolean

@@ -21,7 +21,7 @@
 #include "config.h"
 #endif
 
-#include "gst/gst-i18n-plugin.h"
+#include <glib/gi18n-lib.h>
 
 #include "common.h"
 #include "gstossaudioelements.h"
@@ -32,10 +32,8 @@
 static gboolean
 plugin_init (GstPlugin * plugin)
 {
-  gboolean ret = FALSE;
-
-  ret |= GST_ELEMENT_REGISTER (osssrc, plugin);
-  ret |= GST_ELEMENT_REGISTER (osssink, plugin);
+  GST_ELEMENT_REGISTER (osssrc, plugin);
+  GST_ELEMENT_REGISTER (osssink, plugin);
 
   return TRUE;
 }

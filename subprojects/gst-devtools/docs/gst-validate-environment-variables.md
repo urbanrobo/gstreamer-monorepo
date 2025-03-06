@@ -30,10 +30,28 @@ information and consider differently the level of the reported issues.
 **GST_VALIDATE_FILE.**
 
 Set this variable to a colon-separated list of paths to redirect all
-GstValidate messages to this file. If left unset, debug messages will be
-outputed into the standard error.
+GstValidate messages to this file. If left unset, debug messages are
+output to standard error.
 
 You can use the special names `stdout` and `stderr` to use those output.
+
+**GST_VALIDATE_APPS_DIR.**
+
+Set this variable to a colon separated list of paths. The validate test
+runner will execute all `.py` scripts found within the directories.
+By default GstValidate will look for test applications in the folders:
+* subprojects/gst-examples/webrtc/check/validate/apps
+* subprojects/gst-editing-services/tests/validate
+
+**GST_VALIDATE_PLUGIN_PATH.**
+
+Set this variable to a colon-separated list of paths. GstValidate will
+scan these paths for GstPlugin files and add them to the GstRegistry.
+By default GstValidate will look for plugins in the user data directory
+specified in the [XDG standard]:
+`.local/share/gstreamer-GST_API_VERSION/plugins` and the
+system wide user data directory:
+`/usr/lib/gstreamer-GST_API_VERSION/validate`
 
 **GST_VALIDATE_SCENARIOS_PATH.**
 

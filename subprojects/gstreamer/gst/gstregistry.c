@@ -112,7 +112,7 @@
 
 #include "gstpluginloader.h"
 
-#include "gst-i18n-lib.h"
+#include <glib/gi18n-lib.h>
 
 #include "gst.h"
 #include "glib-compat-private.h"
@@ -703,8 +703,9 @@ gst_plugin_feature_type_name_filter (GstPluginFeature * feature,
 {
   g_assert (GST_IS_PLUGIN_FEATURE (feature));
 
-  return ((data->type == 0 || data->type == G_OBJECT_TYPE (feature)) &&
-      (data->name == NULL || !strcmp (data->name, GST_OBJECT_NAME (feature))));
+  return ((data->type == G_TYPE_INVALID
+          || data->type == G_OBJECT_TYPE (feature)) && (data->name == NULL
+          || !strcmp (data->name, GST_OBJECT_NAME (feature))));
 }
 
 /* returns TRUE if the list was changed
@@ -1189,7 +1190,7 @@ gst_registry_scan_plugin_file (GstRegistryScanContext * context,
     /* Load plugin the old fashioned way... */
 
     /* We don't use a GError here because a failure to load some shared
-     * objects as plugins is normal (particularly in the uninstalled case)
+     * objects as plugins is normal (particularly in the development environment case)
      */
     newplugin = _priv_gst_plugin_load_file_for_registry (filename,
         context->registry, NULL);
@@ -1213,12 +1214,44 @@ gst_registry_scan_plugin_file (GstRegistryScanContext * context,
 }
 
 static gboolean
-is_blacklisted_directory (const gchar * dirent)
+skip_directory (const gchar * parent_path, const gchar * dirent)
 {
+  const gchar *target;
+
   /* hotdoc private folder can contain many files and it slows down
    * the discovery for nothing */
   if (g_str_has_prefix (dirent, "hotdoc-private-"))
     return TRUE;
+
+  /* gst-integration-testsuites can end up with many log files */
+  if (strcmp (dirent, "gst-integration-testsuites") == 0)
+    return TRUE;
+
+  /* Rust build dirs which may contain artefacts we should skip, can be
+   * /target/{debug,release} or /target/{arch}/{debug,release} */
+  target = strstr (parent_path, "/target/");
+
+  /* On Windows both forward and backward slashes may be used */
+#ifdef G_OS_WIN32
+  if (target == NULL)
+    target = strstr (parent_path, "\\target\\");
+#endif
+
+  if (target != NULL) {
+    if (g_str_has_suffix (target + 7, "/debug")
+#ifdef G_OS_WIN32
+        || g_str_has_suffix (target + 7, "\\debug")
+        || g_str_has_suffix (target + 7, "\\release")
+#endif
+        || g_str_has_suffix (target + 7, "/release")) {
+      if (dirent[0] == '.'
+          || strcmp (dirent, "build") == 0
+          || strcmp (dirent, "deps") == 0
+          || strcmp (dirent, "incremental") == 0) {
+        return TRUE;
+      }
+    }
+  }
 
   if (G_LIKELY (dirent[0] != '.'))
     return FALSE;
@@ -1229,7 +1262,7 @@ is_blacklisted_directory (const gchar * dirent)
     return TRUE;
 
   /* can also skip .git and .deps dirs, those won't contain useful files.
-   * This speeds up scanning a bit in uninstalled setups. */
+   * This speeds up scanning a bit in development environment setups. */
   if (strcmp (dirent, ".git") == 0 || strcmp (dirent, ".deps") == 0)
     return TRUE;
 
@@ -1262,7 +1295,7 @@ gst_registry_scan_path_level (GstRegistryScanContext * context,
     }
 
     if (file_status.st_mode & S_IFDIR) {
-      if (G_UNLIKELY (is_blacklisted_directory (dirent))) {
+      if (G_UNLIKELY (skip_directory (path, dirent))) {
         GST_TRACE_OBJECT (context->registry, "ignoring %s directory", dirent);
         g_free (filename);
         continue;
@@ -1590,8 +1623,8 @@ priv_gst_get_relocated_libgstreamer (void)
     }
   }
 #else
-#warning "Unsupported platform for retrieving the current location of a\
- shared library. Relocatable builds will not work."
+#warning "Unsupported platform for retrieving the current location of a shared library."
+#warning "Relocatable builds will not work."
   GST_WARNING ("Don't know how to retrieve the location of the shared "
       "library libgstreamer-" GST_API_VERSION);
 #endif
@@ -1781,12 +1814,11 @@ scan_and_update_registry (GstRegistry * default_registry,
   return REGISTRY_SCAN_AND_UPDATE_SUCCESS_UPDATED;
 }
 
-static gboolean
+static void
 ensure_current_registry (GError ** error)
 {
   gchar *registry_file;
   GstRegistry *default_registry;
-  gboolean ret = TRUE;
   gboolean do_update = TRUE;
   gboolean have_cache = TRUE;
 
@@ -1836,9 +1868,7 @@ ensure_current_registry (GError ** error)
   }
 
   g_free (registry_file);
-  GST_INFO ("registry reading and updating done, result = %d", ret);
-
-  return ret;
+  GST_INFO ("registry reading and updating done");
 }
 #endif /* GST_DISABLE_REGISTRY */
 
@@ -1901,13 +1931,11 @@ gst_registry_fork_set_enabled (gboolean enabled)
 gboolean
 gst_update_registry (void)
 {
-  gboolean res;
-
 #ifndef GST_DISABLE_REGISTRY
   if (!_priv_gst_disable_registry) {
     GError *err = NULL;
 
-    res = ensure_current_registry (&err);
+    ensure_current_registry (&err);
     if (err) {
       GST_WARNING ("registry update failed: %s", err->message);
       g_error_free (err);
@@ -1916,12 +1944,10 @@ gst_update_registry (void)
     }
   } else {
     GST_INFO ("registry update disabled by environment");
-    res = TRUE;
   }
 
 #else
   GST_WARNING ("registry update failed: %s", "registry disabled");
-  res = TRUE;
 #endif /* GST_DISABLE_REGISTRY */
 
 #ifndef GST_DISABLE_OPTION_PARSING
@@ -1931,7 +1957,7 @@ gst_update_registry (void)
   }
 #endif
 
-  return res;
+  return TRUE;
 }
 
 /**

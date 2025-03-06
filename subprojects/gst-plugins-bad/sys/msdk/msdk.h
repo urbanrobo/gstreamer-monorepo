@@ -75,13 +75,21 @@ G_BEGIN_DECLS
 #define GST_MSDK_CAPS_MAKE_WITH_DMABUF_FEATURE(dmaformat) \
   GST_VIDEO_CAPS_MAKE_WITH_FEATURES(GST_CAPS_FEATURE_MEMORY_DMABUF, dmaformat) ", " \
   "interlace-mode = (string) progressive"
-#else
-#define GST_MSDK_CAPS_MAKE_WITH_DMABUF_FEATURE(dmaformat) ""
-#endif
+#define GST_MSDK_CAPS_MAKE_WITH_VA_FEATURE(vaformat) \
+  GST_VIDEO_CAPS_MAKE_WITH_FEATURES("memory:VAMemory", vaformat) ", " \
+  "interlace-mode = (string) progressive"
 
 #define GST_MSDK_CAPS_STR(format,dmaformat) \
   GST_MSDK_CAPS_MAKE (format) "; " \
   GST_MSDK_CAPS_MAKE_WITH_DMABUF_FEATURE (dmaformat)
+#else
+#define GST_MSDK_CAPS_MAKE_WITH_D3D11_FEATURE(d3d11format) \
+  GST_VIDEO_CAPS_MAKE_WITH_FEATURES("memory:D3D11Memory", d3d11format) ", " \
+  "interlace-mode = (string) progressive"
+
+#define GST_MSDK_CAPS_STR(format,dmaformat) \
+  GST_MSDK_CAPS_MAKE (format)
+#endif
 
 #if (MFX_VERSION < 2000)
 typedef void * mfxLoader;
@@ -95,6 +103,7 @@ void GstMFXUnload (mfxLoader loader);
 #endif
 
 typedef struct _MsdkSession MsdkSession;
+typedef struct _GstMsdkSurface GstMsdkSurface;
 
 struct _MsdkSession
 {
@@ -125,6 +134,9 @@ void gst_msdk_set_mfx_frame_info_from_video_info (mfxFrameInfo * mfx_info,
 
 gboolean
 gst_msdk_is_msdk_buffer (GstBuffer * buf);
+
+gboolean
+gst_msdk_is_va_mem (GstMemory * mem);
 
 mfxFrameSurface1 *
 gst_msdk_get_surface_from_buffer (GstBuffer * buf);

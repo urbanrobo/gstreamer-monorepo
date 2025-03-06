@@ -139,7 +139,7 @@ gst_validate_reporter_get_reporting_level (GstValidateReporter * reporter)
  * gst_validate_reporter_get_pipeline:
  * @reporter: The reporter to get the pipeline from
  *
- * Returns: (transfer full) (allow-none): The #GstPipeline
+ * Returns: (transfer full) (nullable): The #GstPipeline
  */
 GstPipeline *
 gst_validate_reporter_get_pipeline (GstValidateReporter * reporter)
@@ -153,6 +153,13 @@ gst_validate_reporter_get_pipeline (GstValidateReporter * reporter)
   return NULL;
 }
 
+/**
+ * gst_validate_reporter_get_report:
+ * @reporter: The reporter to get the report from
+ * @issue_id: The issue id to get the report from
+ *
+ * Returns: (transfer none) (nullable): The #GstValidateReport
+ */
 GstValidateReport *
 gst_validate_reporter_get_report (GstValidateReporter * reporter,
     GstValidateIssueId issue_id)
@@ -161,7 +168,7 @@ gst_validate_reporter_get_report (GstValidateReporter * reporter,
   GstValidateReporterPrivate *priv = gst_validate_reporter_get_priv (reporter);
 
   GST_VALIDATE_REPORTER_REPORTS_LOCK (reporter);
-  report = g_hash_table_lookup (priv->reports, (gconstpointer) issue_id);
+  report = g_hash_table_lookup (priv->reports, GINT_TO_POINTER (issue_id));
   GST_VALIDATE_REPORTER_REPORTS_UNLOCK (reporter);
 
   return report;
@@ -216,7 +223,7 @@ gst_validate_report_valist (GstValidateReporter * reporter,
     goto done;
   }
 
-  prev_report = g_hash_table_lookup (priv->reports, (gconstpointer) issue_id);
+  prev_report = g_hash_table_lookup (priv->reports, GINT_TO_POINTER (issue_id));
 
   runner = gst_validate_reporter_get_runner (reporter);
   if (prev_report && prev_report->level != GST_VALIDATE_REPORT_LEVEL_EXPECTED) {
@@ -240,7 +247,7 @@ gst_validate_report_valist (GstValidateReporter * reporter,
   }
 
   GST_VALIDATE_REPORTER_REPORTS_LOCK (reporter);
-  g_hash_table_insert (priv->reports, (gpointer) issue_id, report);
+  g_hash_table_insert (priv->reports, GINT_TO_POINTER (issue_id), report);
   GST_VALIDATE_REPORTER_REPORTS_UNLOCK (reporter);
 
   if (runner && int_ret == GST_VALIDATE_REPORTER_REPORT) {
@@ -410,9 +417,9 @@ gst_validate_reporter_report_simple (GstValidateReporter * reporter,
 /**
  * gst_validate_reporter_set_name:
  * @reporter: The reporter to set the name on
- * @name: (transfer full): The name of the reporter
+ * @name: (transfer full) (nullable): The name of the reporter
  *
- * Sets @ name on @reporter
+ * Sets @name on @reporter
  */
 void
 gst_validate_reporter_set_name (GstValidateReporter * reporter, gchar * name)
@@ -424,6 +431,14 @@ gst_validate_reporter_set_name (GstValidateReporter * reporter, gchar * name)
   priv->name = name;
 }
 
+/**
+ * gst_validate_reporter_get_name:
+ * @reporter: The reporter to get the name from
+ *
+ * Gets @name of @reporter
+ *
+ * Returns: (transfer none) (nullable): The name of the reporter
+ */
 const gchar *
 gst_validate_reporter_get_name (GstValidateReporter * reporter)
 {
@@ -436,7 +451,7 @@ gst_validate_reporter_get_name (GstValidateReporter * reporter)
  * gst_validate_reporter_get_runner:
  * @reporter: The reporter to get the runner from
  *
- * Returns: (transfer full): The runner
+ * Returns: (transfer full) (nullable): The runner
  */
 GstValidateRunner *
 gst_validate_reporter_get_runner (GstValidateReporter * reporter)

@@ -30,10 +30,9 @@ gst_elements = library('gstcoreelements',
   gst_elements_sources,
   c_args : gst_c_args,
   include_directories : [configinc],
-  dependencies : [gobject_dep, glib_dep, gst_dep, gst_base_dep],
+  dependencies : [gst_dep, gst_base_dep],
   install : true,
   install_dir : plugins_install_dir,
 )
-pkgconfig.generate(gst_elements, install_dir : plugins_pkgconfig_install_dir)
 
 plugins += [gst_elements]

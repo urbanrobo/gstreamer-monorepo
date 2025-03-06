@@ -44,7 +44,7 @@
 #include <gst/gl/wayland/gstgldisplay_wayland.h>
 #endif
 
-#if GST_GL_HAVE_WINDOW_VIV_FB
+#if GST_GL_HAVE_WINDOW_VIV_FB && defined (HAVE_QT_VIV_FB)
 #include <gst/gl/viv-fb/gstgldisplay_viv_fb.h>
 #endif
 
@@ -117,7 +117,7 @@ gst_qt_get_gl_display (gboolean sink)
   }
 #elif GST_GL_HAVE_PLATFORM_EGL && defined (HAVE_QT_EGLFS)
   if (QString::fromUtf8("eglfs") == app->platformName()) {
-#if GST_GL_HAVE_WINDOW_VIV_FB
+#if GST_GL_HAVE_WINDOW_VIV_FB && defined (HAVE_QT_VIV_FB)
     /* FIXME: Could get the display directly from Qt like this
      * QPlatformNativeInterface *native =
      *     QGuiApplication::platformNativeInterface();
@@ -183,7 +183,7 @@ gst_qt_get_gl_wrapcontext (GstGLDisplay * display,
   GstGLAPI G_GNUC_UNUSED gl_api;
   guintptr G_GNUC_UNUSED gl_handle;
   GstGLContext *current;
-  GError *error;
+  GError *error = NULL;
 
   g_return_val_if_fail (display != NULL && wrap_glcontext != NULL, FALSE);
 
@@ -202,7 +202,7 @@ gst_qt_get_gl_wrapcontext (GstGLDisplay * display,
   }
 #endif
 #if GST_GL_HAVE_PLATFORM_EGL && defined (HAVE_QT_EGLFS)
-#if GST_GL_HAVE_WINDOW_VIV_FB
+#if GST_GL_HAVE_WINDOW_VIV_FB && defined (HAVE_QT_VIV_FB)
   if (GST_IS_GL_DISPLAY_VIV_FB (display)) {
 #else
   if (GST_IS_GL_DISPLAY_EGL (display)) {
@@ -248,6 +248,7 @@ gst_qt_get_gl_wrapcontext (GstGLDisplay * display,
     gst_gl_context_activate(*wrap_glcontext, TRUE);
     if (!gst_gl_context_fill_info (*wrap_glcontext, &error)) {
       GST_ERROR ("failed to retrieve qt context info: %s", error->message);
+      gst_gl_context_activate(*wrap_glcontext, FALSE);
       gst_clear_object (wrap_glcontext);
       return FALSE;
     }

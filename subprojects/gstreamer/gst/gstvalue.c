@@ -348,7 +348,7 @@ gst_value_array_init (GValue * value, guint prealloc)
  */
 gchar *
 _priv_gst_value_serialize_any_list (const GValue * value, const gchar * begin,
-    const gchar * end, gboolean print_type)
+    const gchar * end, gboolean print_type, GstSerializeFlags flags)
 {
   guint i;
   GstValueList *vlist = value->data[0].v_pointer;
@@ -361,21 +361,36 @@ _priv_gst_value_serialize_any_list (const GValue * value, const gchar * begin,
   s = g_string_sized_new (2 + (6 * alen) + 2);
   g_string_append (s, begin);
   for (i = 0; i < alen; i++) {
+    gboolean nested_structs_brackets;
     v = &vlist->fields[i];
-    s_val = gst_value_serialize (v);
+    nested_structs_brackets = !(flags & GST_SERIALIZE_FLAG_BACKWARD_COMPAT)
+        && (GST_VALUE_HOLDS_STRUCTURE (v) || GST_VALUE_HOLDS_CAPS (v));
+    if (!nested_structs_brackets) {
+      s_val = gst_value_serialize (v);
+    } else {
+      if (GST_VALUE_HOLDS_STRUCTURE (v))
+        s_val = gst_structure_serialize (gst_value_get_structure (v), flags);
+      else if (GST_VALUE_HOLDS_CAPS (v))
+        s_val = gst_caps_serialize (gst_value_get_caps (v), flags);
+    }
     if (s_val != NULL) {
       if (print_type) {
         g_string_append_c (s, '(');
         g_string_append (s, _priv_gst_value_gtype_to_abbr (G_VALUE_TYPE (v)));
         g_string_append_c (s, ')');
       }
+
+      if (nested_structs_brackets)
+        g_string_append_c (s, '[');
       g_string_append (s, s_val);
+      if (nested_structs_brackets)
+        g_string_append_c (s, ']');
       g_free (s_val);
       if (i < alen - 1) {
         g_string_append_len (s, ", ", 2);
       }
     } else {
-      GST_WARNING ("Could not serialize list/array value of type '%s'",
+      g_critical ("Could not serialize list/array value of type '%s'",
           G_VALUE_TYPE_NAME (v));
     }
   }
@@ -442,7 +457,7 @@ _gst_value_serialize_g_value_array (const GValue * value, const gchar * begin,
         g_string_append_len (s, ", ", 2);
       }
     } else {
-      GST_WARNING ("Could not serialize list/array value of type '%s'",
+      g_critical ("Could not serialize list/array value of type '%s'",
           G_VALUE_TYPE_NAME (v));
     }
   }
@@ -1240,7 +1255,8 @@ gst_value_compare_g_value_array (const GValue * value1, const GValue * value2)
 static gchar *
 gst_value_serialize_value_list (const GValue * value)
 {
-  return _priv_gst_value_serialize_any_list (value, "{ ", " }", TRUE);
+  return _priv_gst_value_serialize_any_list (value, "{ ", " }", TRUE,
+      GST_SERIALIZE_FLAG_BACKWARD_COMPAT);
 }
 
 static gboolean
@@ -1254,7 +1270,8 @@ gst_value_deserialize_value_list (GValue * dest, const gchar * s,
 static gchar *
 gst_value_serialize_value_array (const GValue * value)
 {
-  return _priv_gst_value_serialize_any_list (value, "< ", " >", TRUE);
+  return _priv_gst_value_serialize_any_list (value, "< ", " >", TRUE,
+      GST_SERIALIZE_FLAG_BACKWARD_COMPAT);
 }
 
 static gboolean
@@ -2314,6 +2331,8 @@ _priv_gst_value_get_abbrs (gint * n_abbrs)
       {"date", G_TYPE_DATE}
       ,
       {"datetime", GST_TYPE_DATE_TIME}
+      ,
+      {"gdatetime", G_TYPE_DATE_TIME}
       ,
       {"bitmask", GST_TYPE_BITMASK}
       ,
@@ -4178,15 +4197,23 @@ gst_value_serialize_gflags (const GValue * value)
   result = g_strdup ("");
   while (flags) {
     fl = g_flags_get_first_value (klass, flags);
-    if (fl != NULL) {
-      tmp = g_strconcat (result, (first ? "" : "+"), fl->value_name, NULL);
-      g_free (result);
-      result = tmp;
-      first = FALSE;
-
-      /* clear flag */
-      flags &= ~fl->value;
+    if (fl == NULL) {
+      if (flags) {
+        g_critical ("Could not serialize invalid flags 0x%x of type %s",
+            flags, G_VALUE_TYPE_NAME (value));
+        g_free (result);
+        result = g_strdup ("0");
+      }
+      break;
     }
+
+    tmp = g_strconcat (result, (first ? "" : "+"), fl->value_name, NULL);
+    g_free (result);
+    result = tmp;
+    first = FALSE;
+
+    /* clear flag */
+    flags &= ~fl->value;
   }
   g_type_class_unref (klass);
 
@@ -7258,9 +7285,9 @@ gst_value_deserialize_date (GValue * dest, const gchar * s)
   return TRUE;
 }
 
-/*************
+/***************
  * GstDateTime *
- *************/
+ ***************/
 
 static gint
 gst_value_compare_date_time (const GValue * value1, const GValue * value2)
@@ -7323,6 +7350,60 @@ gst_value_transform_string_date (const GValue * src_value, GValue * dest_value)
   gst_value_deserialize_date (dest_value, src_value->data[0].v_pointer);
 }
 
+/*************
+ * GDateTime *
+ *************/
+
+static gint
+gst_value_compare_g_date_time (const GValue * value1, const GValue * value2)
+{
+  const GDateTime *date1 = (const GDateTime *) g_value_get_boxed (value1);
+  const GDateTime *date2 = (const GDateTime *) g_value_get_boxed (value2);
+
+  if (date1 == date2)
+    return GST_VALUE_EQUAL;
+
+  if ((date1 == NULL) && (date2 != NULL)) {
+    return GST_VALUE_LESS_THAN;
+  }
+  if ((date2 == NULL) && (date1 != NULL)) {
+    return GST_VALUE_LESS_THAN;
+  }
+
+  return g_date_time_compare (date1, date2);
+}
+
+static gchar *
+gst_value_serialize_g_date_time (const GValue * val)
+{
+  GDateTime *date = (GDateTime *) g_value_get_boxed (val);
+
+  if (date == NULL)
+    return g_strdup ("null");
+
+  return g_date_time_format_iso8601 (date);
+}
+
+static gboolean
+gst_value_deserialize_g_date_time (GValue * dest, const gchar * s)
+{
+  GDateTime *datetime;
+
+  if (!s || strcmp (s, "null") == 0) {
+    return FALSE;
+  }
+
+  /* The Gstreamer iso8601 parser is a bit more forgiving */
+  datetime =
+      gst_date_time_to_g_date_time (gst_date_time_new_from_iso8601_string (s));
+  if (datetime != NULL) {
+    g_value_take_boxed (dest, datetime);
+    return TRUE;
+  }
+  GST_WARNING ("Failed to deserialize date time string '%s' to GLibDateTime",
+      s);
+  return FALSE;
+}
 
 /*********
  * bytes *
@@ -7767,12 +7848,12 @@ try_as_flags_string:
     if (end != NULL) {
       gchar *class_name = g_strndup (set_class, end - set_class);
       GType flags_type = g_type_from_name (class_name);
-      if (flags_type == 0) {
+      if (flags_type == G_TYPE_INVALID) {
         GST_TRACE ("Looking for dynamic type %s", class_name);
         gst_dynamic_type_factory_load (class_name);
       }
 
-      if (flags_type != 0) {
+      if (flags_type != G_TYPE_INVALID) {
         flags_klass = g_type_class_ref (flags_type);
         GST_TRACE ("Going to parse %s as %s", s, class_name);
       }
@@ -8117,6 +8198,7 @@ _priv_gst_value_initialize (void)
   REGISTER_SERIALIZATION (G_TYPE_DATE, date);
   REGISTER_SERIALIZATION (G_TYPE_BYTES, bytes);
   REGISTER_SERIALIZATION (gst_date_time_get_type (), date_time);
+  REGISTER_SERIALIZATION (G_TYPE_DATE_TIME, g_date_time);
   REGISTER_SERIALIZATION (gst_bitmask_get_type (), bitmask);
   REGISTER_SERIALIZATION (gst_structure_get_type (), structure);
   REGISTER_SERIALIZATION (gst_flagset_get_type (), flagset);

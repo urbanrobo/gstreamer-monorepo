@@ -44,7 +44,7 @@ struct _GstRtpGSTPay
 {
   GstRTPBasePayload payload;
 
-  GList *pending_buffers; /* GstBufferList */
+  GstBufferList *pending_buffers;
   GstAdapter *adapter;
   guint8 flags;
   guint8 etype;

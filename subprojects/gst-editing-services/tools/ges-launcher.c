@@ -914,7 +914,9 @@ _set_sink (GESLauncher * self, const gchar * sink_desc, SetSinkFunc set_func)
   if (sink_desc != NULL) {
     GError *err = NULL;
     GstElement *sink = gst_parse_bin_from_description_full (sink_desc, TRUE,
-        NULL, GST_PARSE_FLAG_NO_SINGLE_ELEMENT_BINS, &err);
+        NULL,
+        GST_PARSE_FLAG_NO_SINGLE_ELEMENT_BINS | GST_PARSE_FLAG_PLACE_IN_BIN,
+        &err);
     if (sink == NULL) {
       GST_ERROR ("could not create the requested videosink %s (err: %s), "
           "exiting", err ? err->message : "", sink_desc);
@@ -1087,6 +1089,7 @@ _run_pipeline (GESLauncher * self)
       if (!ges_project_load (project, self->priv->timeline, NULL)) {
         ges_printerr ("Could not load timeline: %s\n",
             opts->sanitized_timeline);
+        g_clear_pointer (&opts->sanitized_timeline, &g_free);
         return FALSE;
       }
     }
@@ -1494,7 +1497,9 @@ _local_command_line (GApplication * application, gchar ** arguments[],
 
   if (!opts->load_path && !opts->scenario && !opts->testfile
       && !opts->list_transitions && (argc <= 1)) {
-    gst_print ("%s", g_option_context_get_help (ctx, TRUE, NULL));
+    gchar *help_str = g_option_context_get_help (ctx, TRUE, NULL);
+    gst_print ("%s", help_str);
+    g_free (help_str);
     g_option_context_free (ctx);
     *exit_status = 1;
     goto done;

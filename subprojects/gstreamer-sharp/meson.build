@@ -1,5 +1,5 @@
-project('gstreamer-sharp', ['cs', 'c'], version: '1.21.0.1',
-    meson_version : '>= 0.59', license: 'LGPL')
+project('gstreamer-sharp', ['cs', 'c'], version: '1.22.12.1',
+    meson_version : '>= 0.62', license: 'LGPL')
 
 if host_machine.system() == 'osx'
   lib_prefix=''
@@ -183,3 +183,5 @@ if bindinator.get_variable('found')
 else
     warning('Bindinator not usable as some required dependencies are not avalaible.')
 endif
+
+meson.add_dist_script('scripts/gen-changelog.py', meson.project_name(), '1.20.0', meson.project_version())

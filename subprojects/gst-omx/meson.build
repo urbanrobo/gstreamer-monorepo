@@ -1,6 +1,6 @@
 project('gst-omx', 'c',
-  version : '1.21.0.1',
-  meson_version : '>= 0.59',
+  version : '1.22.12.1',
+  meson_version : '>= 0.62',
   default_options : [ 'warning_level=1',
                       'buildtype=debugoptimized' ])
 
@@ -15,7 +15,7 @@ else
   gst_version_nano = 0
 endif
 
-glib_req = '>= 2.56.0'
+glib_req = '>= 2.62.0'
 gst_req = '>= @0@.@1@.0'.format(gst_version_major, gst_version_minor)
 tizil_req = '>= 0.19.0'
 api_version = '1.0'
@@ -47,6 +47,12 @@ if cc.get_id() == 'msvc'
   noseh_link_args = ['/SAFESEH:NO']
 else
   noseh_link_args = []
+endif
+
+# glib doesn't support unloading, which means that unloading and reloading
+# any library that registers static types will fail
+if cc.has_link_argument('-Wl,-z,nodelete')
+  add_project_link_arguments('-Wl,-z,nodelete', language: 'c')
 endif
 
 cdata = configuration_data()
@@ -163,9 +169,7 @@ gstcheck_dep = dependency('gstreamer-check-1.0', version : gst_req,
     fallback : ['gstreamer', 'gst_check_dep'])
 
 libm = cc.find_library('m', required : false)
-glib_dep = dependency('glib-2.0', version : glib_req, fallback: ['glib', 'libglib_dep'])
-gio_dep = dependency('gio-2.0', version : glib_req, fallback: ['glib', 'libgio_dep'] )
-gmodule_dep = dependency('gmodule-2.0', version : glib_req, fallback: ['glib', 'libgmodule_dep'])
+gmodule_dep = dependency('gmodule-no-export-2.0', version: glib_req)
 
 gst_omx_args = ['-DHAVE_CONFIG_H']
 configinc = include_directories('.')
@@ -288,7 +292,7 @@ endif
 have_omx_vp8 = cc.has_header_symbol(
     'OMX_Video.h',
     'OMX_VIDEO_CodingVP8',
-    prefix : extra_video_headers, 
+    prefix : extra_video_headers,
     args : gst_omx_args,
     include_directories : [omx_inc])
 if have_omx_vp8
@@ -348,7 +352,6 @@ warning_flags = [
 
 warning_c_flags = [
   '-Wmissing-prototypes',
-  '-Wdeclaration-after-statement',
   '-Wold-style-definition',
   '-Waggregate-return',
 ]
@@ -422,3 +425,5 @@ if gst_version_nano == 0
 endif
 
 configure_file(output: 'config.h', configuration: cdata)
+
+meson.add_dist_script('scripts/gen-changelog.py', meson.project_name(), '1.20.0', meson.project_version())

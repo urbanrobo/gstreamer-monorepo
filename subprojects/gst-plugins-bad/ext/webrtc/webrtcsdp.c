@@ -81,15 +81,14 @@ _check_valid_state_for_sdp_change (GstWebRTCSignalingState state,
     return TRUE;
 
   {
-    gchar *state_str = _enum_value_to_string (GST_TYPE_WEBRTC_SIGNALING_STATE,
+    const gchar *state_str =
+        _enum_value_to_string (GST_TYPE_WEBRTC_SIGNALING_STATE,
         state);
-    gchar *type_str = _enum_value_to_string (GST_TYPE_WEBRTC_SDP_TYPE, type);
-    g_set_error (error, GST_WEBRTC_ERROR,
-        GST_WEBRTC_ERROR_INVALID_STATE,
+    const gchar *type_str =
+        _enum_value_to_string (GST_TYPE_WEBRTC_SDP_TYPE, type);
+    g_set_error (error, GST_WEBRTC_ERROR, GST_WEBRTC_ERROR_INVALID_STATE,
         "Not in the correct state (%s) for setting %s %s description",
         state_str, _sdp_source_to_string (source), type_str);
-    g_free (state_str);
-    g_free (type_str);
   }
 
   return FALSE;
@@ -102,7 +101,7 @@ static gboolean
 _check_sdp_crypto (SDPSource source, GstWebRTCSessionDescription * sdp,
     GError ** error)
 {
-  const gchar *message_fingerprint, *fingerprint;
+  const gchar *message_fingerprint;
   const GstSDPKey *key;
   int i;
 
@@ -113,30 +112,24 @@ _check_sdp_crypto (SDPSource source, GstWebRTCSessionDescription * sdp,
     return FALSE;
   }
 
-  message_fingerprint = fingerprint =
+  message_fingerprint =
       gst_sdp_message_get_attribute_val (sdp->sdp, "fingerprint");
   for (i = 0; i < gst_sdp_message_medias_len (sdp->sdp); i++) {
     const GstSDPMedia *media = gst_sdp_message_get_media (sdp->sdp, i);
     const gchar *media_fingerprint =
         gst_sdp_media_get_attribute_val (media, "fingerprint");
+    GstWebRTCRTPTransceiverDirection direction =
+        _get_direction_from_media (media);
+
+    /* Skip inactive media */
+    if (direction == GST_WEBRTC_RTP_TRANSCEIVER_DIRECTION_INACTIVE)
+      continue;
 
     if (!IS_EMPTY_SDP_ATTRIBUTE (message_fingerprint)
         && !IS_EMPTY_SDP_ATTRIBUTE (media_fingerprint)) {
       g_set_error (error, GST_WEBRTC_ERROR,
           GST_WEBRTC_ERROR_FINGERPRINT_FAILURE,
           "No fingerprint lines in sdp for media %u", i);
-      return FALSE;
-    }
-    if (IS_EMPTY_SDP_ATTRIBUTE (fingerprint)) {
-      fingerprint = media_fingerprint;
-    }
-    if (!IS_EMPTY_SDP_ATTRIBUTE (media_fingerprint)
-        && g_strcmp0 (fingerprint, media_fingerprint) != 0) {
-      g_set_error (error, GST_WEBRTC_ERROR,
-          GST_WEBRTC_ERROR_FINGERPRINT_FAILURE,
-          "Fingerprint in media %u differs from %s fingerprint. "
-          "\'%s\' != \'%s\'", i, message_fingerprint ? "global" : "previous",
-          fingerprint, media_fingerprint);
       return FALSE;
     }
   }
@@ -425,12 +418,10 @@ void
 _media_replace_direction (GstSDPMedia * media,
     GstWebRTCRTPTransceiverDirection direction)
 {
-  gchar *dir_str;
+  const gchar *dir_str;
   int i;
 
-  dir_str =
-      _enum_value_to_string (GST_TYPE_WEBRTC_RTP_TRANSCEIVER_DIRECTION,
-      direction);
+  dir_str = gst_webrtc_rtp_transceiver_direction_to_string (direction);
 
   for (i = 0; i < gst_sdp_media_attributes_len (media); i++) {
     const GstSDPAttribute *attr = gst_sdp_media_get_attribute (media, i);
@@ -443,14 +434,12 @@ _media_replace_direction (GstSDPMedia * media,
       GST_TRACE ("replace %s with %s", attr->key, dir_str);
       gst_sdp_attribute_set (&new_attr, dir_str, "");
       gst_sdp_media_replace_attribute (media, i, &new_attr);
-      g_free (dir_str);
       return;
     }
   }
 
   GST_TRACE ("add %s", dir_str);
   gst_sdp_media_add_attribute (media, dir_str, "");
-  g_free (dir_str);
 }
 
 GstWebRTCRTPTransceiverDirection
@@ -556,7 +545,7 @@ _intersect_dtls_setup (GstWebRTCDTLSSetup offer)
 void
 _media_replace_setup (GstSDPMedia * media, GstWebRTCDTLSSetup setup)
 {
-  gchar *setup_str;
+  const gchar *setup_str;
   int i;
 
   setup_str = _enum_value_to_string (GST_TYPE_WEBRTC_DTLS_SETUP, setup);
@@ -569,14 +558,12 @@ _media_replace_setup (GstSDPMedia * media, GstWebRTCDTLSSetup setup)
       GST_TRACE ("replace setup:%s with setup:%s", attr->value, setup_str);
       gst_sdp_attribute_set (&new_attr, "setup", setup_str);
       gst_sdp_media_replace_attribute (media, i, &new_attr);
-      g_free (setup_str);
       return;
     }
   }
 
   GST_TRACE ("add setup:%s", setup_str);
   gst_sdp_media_add_attribute (media, "setup", setup_str);
-  g_free (setup_str);
 }
 
 GstWebRTCDTLSSetup

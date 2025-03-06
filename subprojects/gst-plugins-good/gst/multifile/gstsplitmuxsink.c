@@ -2805,14 +2805,34 @@ handle_mq_input (GstPad * pad, GstPadProbeInfo * info, MqStreamCtx * ctx)
           splitmux->input_state = SPLITMUX_INPUT_STATE_WAITING_GOP_COLLECT;
           /* Wake up other input pads to collect this GOP */
           GST_SPLITMUX_BROADCAST_INPUT (splitmux);
-          check_completed_gop (splitmux, ctx);
+          if (g_queue_is_empty (&splitmux->pending_input_gops)) {
+            GST_WARNING_OBJECT (splitmux,
+                "EOS with no buffers received on the reference pad");
+
+            /* - child muxer and sink might be still locked state
+             *   (see gst_splitmux_reset_elements()) so should be unlocked
+             *   for state change of splitmuxsink to be applied to child
+             * - would need to post async done message
+             * - location on sink element is still null then it will post
+             *   error message on bus (muxer will produce something, header
+             *   data for example)
+             *
+             * Calls start_next_fragment() here, the method will address
+             * everything the above mentioned one */
+            ret = start_next_fragment (splitmux, ctx);
+            if (ret != GST_FLOW_OK)
+              goto beach;
+          } else {
+            check_completed_gop (splitmux, ctx);
+          }
         } else if (splitmux->input_state ==
             SPLITMUX_INPUT_STATE_WAITING_GOP_COLLECT) {
           /* If we are waiting for a GOP to be completed (ie, for aux
            * pads to catch up), then this pad is complete, so check
            * if the whole GOP is.
            */
-          check_completed_gop (splitmux, ctx);
+          if (!g_queue_is_empty (&splitmux->pending_input_gops))
+            check_completed_gop (splitmux, ctx);
         }
         GST_SPLITMUX_UNLOCK (splitmux);
         break;
@@ -2927,10 +2947,16 @@ handle_mq_input (GstPad * pad, GstPadProbeInfo * info, MqStreamCtx * ctx)
   else
     running_time_pts = GST_CLOCK_STIME_NONE;
 
-  if (GST_CLOCK_TIME_IS_VALID (dts))
+  if (GST_CLOCK_TIME_IS_VALID (dts)) {
     running_time_dts = my_segment_to_running_time (&ctx->in_segment, dts);
-  else
-    running_time_dts = GST_CLOCK_STIME_NONE;
+
+    /* DTS > PTS makes conceptually no sense so catch such invalid DTS here
+     * by clamping to the PTS */
+    running_time_dts = MIN (running_time_pts, running_time_dts);
+  } else {
+    /* If there is no DTS then assume PTS=DTS */
+    running_time_dts = running_time_pts;
+  }
 
   /* Try to make sure we have a valid running time */
   if (!GST_CLOCK_STIME_IS_VALID (ctx->in_running_time)) {
@@ -3081,17 +3107,14 @@ handle_mq_input (GstPad * pad, GstPadProbeInfo * info, MqStreamCtx * ctx)
 
   loop_again = TRUE;
   do {
-    if (ctx->flushing)
-      break;
+    if (ctx->flushing) {
+      ret = GST_FLOW_FLUSHING;
+      goto beach;
+    }
 
     switch (splitmux->input_state) {
       case SPLITMUX_INPUT_STATE_COLLECTING_GOP_START:
-        if (ctx->is_releasing) {
-          /* The pad belonging to this context is being released */
-          GST_WARNING_OBJECT (pad, "Pad is being released while the muxer is "
-              "running. Data might not drain correctly");
-          loop_again = FALSE;
-        } else if (ctx->is_reference) {
+        if (ctx->is_reference) {
           const InputGop *gop, *next_gop;
 
           /* This is the reference context. If it's a keyframe,
@@ -3181,6 +3204,13 @@ handle_mq_input (GstPad * pad, GstPadProbeInfo * info, MqStreamCtx * ctx)
 
         GST_LOG_OBJECT (pad,
             "Collected last packet of GOP. Checking other pads");
+
+        if (g_queue_is_empty (&splitmux->pending_input_gops)) {
+          GST_WARNING_OBJECT (pad,
+              "Reference was closed without GOP, dropping");
+          goto drop;
+        }
+
         check_completed_gop (splitmux, ctx);
         break;
       }
@@ -3229,6 +3259,12 @@ beach:
     mq_stream_buf_free (buf_info);
   GST_PAD_PROBE_INFO_FLOW_RETURN (info) = ret;
   return GST_PAD_PROBE_PASS;
+drop:
+  GST_SPLITMUX_UNLOCK (splitmux);
+  if (buf_info)
+    mq_stream_buf_free (buf_info);
+  GST_PAD_PROBE_INFO_FLOW_RETURN (info) = GST_FLOW_EOS;
+  return GST_PAD_PROBE_DROP;
 }
 
 static void
@@ -3576,6 +3612,9 @@ gst_splitmux_sink_release_pad (GstElement * element, GstPad * pad)
   /* Remove the context from our consideration */
   splitmux->contexts = g_list_remove (splitmux->contexts, ctx);
 
+  ctx->flushing = TRUE;
+  GST_SPLITMUX_BROADCAST_INPUT (splitmux);
+
   GST_SPLITMUX_UNLOCK (splitmux);
 
   if (ctx->sink_pad_block_id) {
@@ -3586,10 +3625,10 @@ gst_splitmux_sink_release_pad (GstElement * element, GstPad * pad)
   if (ctx->src_pad_block_id)
     gst_pad_remove_probe (ctx->srcpad, ctx->src_pad_block_id);
 
+  /* Wait for the pad to be free */
+  GST_PAD_STREAM_LOCK (pad);
   GST_SPLITMUX_LOCK (splitmux);
-
-  ctx->is_releasing = TRUE;
-  GST_SPLITMUX_BROADCAST_INPUT (splitmux);
+  GST_PAD_STREAM_UNLOCK (pad);
 
   /* Can release the context now */
   mq_stream_ctx_free (ctx);

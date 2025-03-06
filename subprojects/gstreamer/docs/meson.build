@@ -8,11 +8,20 @@ if meson.is_cross_build()
     subdir_done()
 endif
 
+if static_build
+    if get_option('doc').enabled()
+        error('Documentation enabled but not supported when building statically.')
+    endif
+
+    message('Building statically, can\'t build the documentation')
+    subdir_done()
+endif
+
 hotdoc_plugin_scanner = executable('gst-hotdoc-plugins-scanner',
   'gst-hotdoc-plugins-scanner.c',
   c_args : gst_c_args,
   include_directories : [configinc],
-  dependencies : [gobject_dep, gmodule_dep, glib_dep, gio_dep, gst_dep],
+  dependencies : [gst_dep, gmodule_dep, gio_dep],
   install_dir : helpers_install_dir,
   link_with: [printf_lib],
   install: true,
@@ -27,7 +36,7 @@ configure_file(
 
 plugins_cache_generator = find_program(join_paths(meson.current_build_dir(), 'gst-plugins-doc-cache-generator'))
 plugins_cache = join_paths(meson.current_source_dir(), 'plugins', 'gst_plugins_cache.json')
-plugins_doc_dep = custom_target('build-doc-cache',
+gst_plugins_doc_dep = custom_target('build-doc-cache',
     command: [plugins_cache_generator, plugins_cache, '@OUTPUT@', '@INPUT@'],
     input: plugins,
     output: 'gst_plugins_cache.json',
@@ -98,7 +107,7 @@ version_entities = configure_file(input : 'version.in',
 
 gst_excludes = []
 foreach h: ['gettext.h', 'glib-compat-private.h', 'glib-compat.h',
-            'gst-i18n-app.h', 'gst-i18n-lib.h', 'gst_private.h',
+            'gst_private.h',
             'gstelementdetails.h', 'gstmacros.h', 'gstmarshal.h',
             'math-compat.h', 'parse/grammar.tab.h',
             '../libs/gst/base/gstindex.h',
@@ -121,8 +130,9 @@ libs_doc = [hotdoc.generate_doc('gstreamer',
     gi_index: 'gst/gi-index.md',
     gi_smart_index: true,
     gi_c_source_roots: [join_paths(meson.current_source_dir(), '../gst/'), ],
-    dependencies: [gst_dep, glib_dep, gobject_dep, gmodule_dep, hotdoc_plugin_scanner],
+    dependencies: [gst_dep, gmodule_dep],
     extra_assets: [join_paths(meson.current_source_dir(), 'images')],
+    depends: gst_gir[0],
 )]
 
 libs = [
@@ -147,8 +157,9 @@ foreach lib: libs
       gi_index: join_paths('libs/', name, 'index.md'),
       gi_smart_index: true,
       gi_order_generated_subpages: true,
-      dependencies: deps + [hotdoc_plugin_scanner],
+      dependencies: deps,
       install: false,
+      depends: gir[0],
   )]
 endforeach
 
@@ -160,18 +171,18 @@ plugins_doc = [
         gst_index: 'plugins/index.md',
         gst_smart_index: true,
         gst_c_sources: ['../plugins/elements/*.c', '../plugins/elements/*.h'],
-        dependencies: [plugins_doc_dep],
+        dependencies: [gst_plugins_doc_dep],
         gst_cache_file: plugins_cache,
         gst_plugin_name: 'coreelements',
     ),
     hotdoc.generate_doc('coretracers',
         project_version: apiversion,
-        sitemap: 'plugins/sitemap.txt',
-        index: 'plugins/blank.md',
-        gst_index: 'plugins/blank.md',
+        sitemap: 'plugins/coretracers/sitemap.txt',
+        index: 'plugins/coretracers/index.md',
+        gst_index: 'plugins/coretracers/index.md',
         gst_smart_index: true,
         gst_c_sources: ['../plugins/tracers/*.c', '../plugins/tracers/*.h'],
-        dependencies: [plugins_doc_dep],
+        dependencies: [gst_plugins_doc_dep],
         gst_cache_file: plugins_cache,
         gst_plugin_name: 'coretracers',
     )

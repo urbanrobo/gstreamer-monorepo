@@ -63,8 +63,9 @@ GST_DEBUG_CATEGORY_STATIC (gst_dtls_srtp_enc_debug);
 
 #define gst_dtls_srtp_enc_parent_class parent_class
 G_DEFINE_TYPE_WITH_CODE (GstDtlsSrtpEnc, gst_dtls_srtp_enc,
-    GST_TYPE_DTLS_SRTP_BIN, GST_DEBUG_CATEGORY_INIT (gst_dtls_srtp_enc_debug,
-        "dtlssrtpenc", 0, "DTLS Decoder"));
+    GST_TYPE_DTLS_SRTP_BIN,
+    GST_DEBUG_CATEGORY_INIT (gst_dtls_srtp_enc_debug,
+        "dtlssrtpenc", 0, "DTLS-SRTP Encoder"));
 GST_ELEMENT_REGISTER_DEFINE_WITH_CODE (dtlssrtpenc, "dtlssrtpenc",
     GST_RANK_NONE, GST_TYPE_DTLS_SRTP_ENC, dtls_element_init (plugin));
 
@@ -394,6 +395,9 @@ gst_dtls_srtp_enc_request_new_pad (GstElement * element,
 
   g_return_val_if_fail (templ->direction == GST_PAD_SINK, NULL);
   g_return_val_if_fail (self->srtp_enc, NULL);
+
+  if (name == NULL)
+    return NULL;
 
   if (templ == gst_element_class_get_pad_template (klass, "rtp_sink_%d")) {
     gchar *clocksync_name;

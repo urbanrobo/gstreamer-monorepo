@@ -18,9 +18,14 @@
  * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
  * Boston, MA 02110-1301, USA.
  */
+#ifdef HAVE_CONFIG_H
+#  include "config.h"
+#endif
 
 #include "media-descriptor-parser.h"
 #include <string.h>
+
+#include "gst-validate-internal.h"
 
 struct _GstValidateMediaDescriptorParserPrivate
 {
@@ -228,7 +233,9 @@ on_start_element_cb (GMarkupParseContext * context,
     const gchar ** attribute_values, gpointer user_data, GError ** error)
 {
   GstValidateMediaFileNode
-      * filenode = GST_VALIDATE_MEDIA_DESCRIPTOR (user_data)->filenode;
+      * filenode =
+      gst_validate_media_descriptor_get_file_node (GST_VALIDATE_MEDIA_DESCRIPTOR
+      (user_data));
 
   GstValidateMediaDescriptorParserPrivate *priv =
       GST_VALIDATE_MEDIA_DESCRIPTOR_PARSER (user_data)->priv;
@@ -466,12 +473,13 @@ gboolean
 
   g_return_val_if_fail (GST_IS_VALIDATE_MEDIA_DESCRIPTOR_PARSER (parser),
       FALSE);
-  g_return_val_if_fail (((GstValidateMediaDescriptor *) parser)->filenode,
-      FALSE);
+  g_return_val_if_fail (gst_validate_media_descriptor_get_file_node (
+          (GstValidateMediaDescriptor *) parser), FALSE);
 
   caps = gst_pad_query_caps (pad, NULL);
-  for (tmp = ((GstValidateMediaDescriptor *) parser)->filenode->streams; tmp;
-      tmp = tmp->next) {
+  for (tmp =
+      gst_validate_media_descriptor_get_file_node ((GstValidateMediaDescriptor
+              *) parser)->streams; tmp; tmp = tmp->next) {
     GstValidateMediaStreamNode *streamnode = (GstValidateMediaStreamNode *)
         tmp->data;
 
@@ -497,11 +505,12 @@ gboolean
 
   g_return_val_if_fail (GST_IS_VALIDATE_MEDIA_DESCRIPTOR_PARSER (parser),
       FALSE);
-  g_return_val_if_fail (((GstValidateMediaDescriptor *) parser)->filenode,
-      FALSE);
+  g_return_val_if_fail (gst_validate_media_descriptor_get_file_node (
+          (GstValidateMediaDescriptor *) parser), FALSE);
 
-  for (tmp = ((GstValidateMediaDescriptor *) parser)->filenode->streams; tmp;
-      tmp = tmp->next) {
+  for (tmp =
+      gst_validate_media_descriptor_get_file_node ((GstValidateMediaDescriptor
+              *) parser)->streams; tmp; tmp = tmp->next) {
     GstValidateMediaStreamNode *streamnode = (GstValidateMediaStreamNode *)
         tmp->data;
 
@@ -521,11 +530,13 @@ gboolean
 
   g_return_val_if_fail (GST_IS_VALIDATE_MEDIA_DESCRIPTOR_PARSER (parser),
       FALSE);
-  g_return_val_if_fail (((GstValidateMediaDescriptor *) parser)->filenode,
-      FALSE);
+  g_return_val_if_fail (gst_validate_media_descriptor_get_file_node (
+          (GstValidateMediaDescriptor *) parser), FALSE);
   g_return_val_if_fail (GST_IS_STRUCTURE (taglist), FALSE);
 
-  tagsnode = ((GstValidateMediaDescriptor *) parser)->filenode->tags;
+  tagsnode =
+      gst_validate_media_descriptor_get_file_node ((GstValidateMediaDescriptor
+          *) parser)->tags;
 
   for (tmptag = tagsnode->tags; tmptag; tmptag = tmptag->next) {
     if (gst_validate_tag_node_compare ((GstValidateMediaTagNode *)
@@ -547,10 +558,12 @@ gboolean
 
   g_return_val_if_fail (GST_IS_VALIDATE_MEDIA_DESCRIPTOR_PARSER (parser),
       FALSE);
-  g_return_val_if_fail (((GstValidateMediaDescriptor *) parser)->filenode,
-      FALSE);
+  g_return_val_if_fail (gst_validate_media_descriptor_get_file_node (
+          (GstValidateMediaDescriptor *) parser), FALSE);
 
-  tagsnode = ((GstValidateMediaDescriptor *) parser)->filenode->tags;
+  tagsnode =
+      gst_validate_media_descriptor_get_file_node ((GstValidateMediaDescriptor
+          *) parser)->tags;
   for (tmptag = tagsnode->tags; tmptag; tmptag = tmptag->next) {
     gchar *tag = NULL;
 

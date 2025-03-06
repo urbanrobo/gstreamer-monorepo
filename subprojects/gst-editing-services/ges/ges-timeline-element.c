@@ -2,18 +2,20 @@
  * Copyright (C) <2013> Thibault Saunier <thibault.saunier@collabora.com>
  *               <2013> Collabora Ltd.
  *
- * gst-editing-services is free software: you can redistribute it and/or modify it
- * under the terms of the GNU General Public License as published by the
- * Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Library General Public
+ * License as published by the Free Software Foundation; either
+ * version 2 of the License, or (at your option) any later version.
  *
- * gst-editing-services is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
- * See the GNU General Public License for more details.
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Library General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License along
- * with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * You should have received a copy of the GNU Library General Public
+ * License along with this library; if not, write to the
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 /**
@@ -1583,8 +1585,7 @@ ges_timeline_element_trim (GESTimelineElement * self, GstClockTime start)
  * @self, but should be thought of as an intermediate object used for a
  * single paste operation.
  *
- * Returns: (transfer floating): The newly create element,
- * copied from @self.
+ * Returns: (transfer floating): The newly create element, copied from @self.
  */
 G_GNUC_BEGIN_IGNORE_DEPRECATIONS;       /* Start ignoring GParameter deprecation */
 GESTimelineElement *
@@ -1666,7 +1667,7 @@ ges_timeline_element_get_toplevel_parent (GESTimelineElement * self)
  *
  * Gets the #GESTimelineElement:name for the element.
  *
- * Returns: (transfer full): The name of @self.
+ * Returns: (transfer full) (nullable): The name of @self.
  */
 gchar *
 ges_timeline_element_get_name (GESTimelineElement * self)
@@ -1679,7 +1680,7 @@ ges_timeline_element_get_name (GESTimelineElement * self)
 /**
  * ges_timeline_element_set_name:
  * @self: A #GESTimelineElement
- * @name: (allow-none): The name @self should take
+ * @name: (nullable): The name @self should take
  *
  * Sets the #GESTimelineElement:name for the element. If %NULL is given
  * for @name, then the library will instead generate a new name based on
@@ -2370,7 +2371,7 @@ ges_timeline_element_get_layer_priority (GESTimelineElement * self)
  * @edge: The edge of @self where the edit should occur
  * @position: The edit position: a new location for the edge of @self
  * (in nanoseconds) in the timeline coordinates
- * @error: (nullable): Return location for an error
+ * @error: Return location for an error
  *
  * Edits the element within its timeline by adjusting its
  * #GESTimelineElement:start, #GESTimelineElement:duration or

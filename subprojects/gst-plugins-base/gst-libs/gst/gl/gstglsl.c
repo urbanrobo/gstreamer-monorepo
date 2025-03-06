@@ -237,7 +237,7 @@ _is_valid_version_profile (GstGLSLVersion version, GstGLSLProfile profile)
  * @version: a #GstGLSLVersion
  * @profile: a #GstGLSLVersion
  *
- * Returns: the combined GLSL `#version` string for @version and @profile
+ * Returns: (nullable): the combined GLSL `#version` string for @version and @profile
  */
 gchar *
 gst_glsl_version_profile_to_string (GstGLSLVersion version,
@@ -897,7 +897,12 @@ _mangle_version_profile_from_gl_api (GstGLContext * context,
       *profile = GST_GLSL_PROFILE_ES;
     }
   } else if (gl_api & GST_GL_API_OPENGL) {
-    *version = GST_GLSL_VERSION_110;
+    /* We only use GST_GL_API_OPENGL3 from 3.1, but nothing prevents us from
+     * using 3.0/1.30 GLSSL with GL2 API */
+    if (gl_major >= 3)
+      *version = GST_GLSL_VERSION_130;
+    else
+      *version = GST_GLSL_VERSION_110;
     *profile = GST_GLSL_PROFILE_COMPATIBILITY;
   }
 }

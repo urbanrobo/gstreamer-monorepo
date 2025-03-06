@@ -168,7 +168,7 @@ gst_gl_display_class_init (GstGLDisplayClass * klass)
    * It can be called in any thread and it is emitted with
    * display's object lock held.
    *
-   * Returns: (transfer full): the new context.
+   * Returns: (transfer full) (nullable): the new context.
    */
   gst_gl_display_signals[CREATE_CONTEXT] =
       g_signal_new ("create-context", G_TYPE_FROM_CLASS (klass),
@@ -281,14 +281,8 @@ static GstGLDisplayType
 gst_gl_display_type_from_environment (void)
 {
   const char *env = g_getenv ("GST_GL_WINDOW");
-  const char *platform = g_getenv ("GST_GL_PLATFORM");
 
-  init_debug ();
-
-  GST_INFO ("creating a display, user choice:%s (platform: %s)",
-      GST_STR_NULL (env), GST_STR_NULL (platform));
-
-  if (!env && !platform)
+  if (!env)
     return GST_GL_DISPLAY_TYPE_ANY;
 
   if (env) {
@@ -302,14 +296,14 @@ gst_gl_display_type_from_environment (void)
       return GST_GL_DISPLAY_TYPE_WIN32;
     } else if (g_strstr_len (env, 8, "dispmanx")) {
       return GST_GL_DISPLAY_TYPE_DISPMANX;
+    } else if (g_strstr_len (env, 10, "egl-device")) {
+      return GST_GL_DISPLAY_TYPE_EGL_DEVICE;
     } else if (g_strstr_len (env, 3, "egl")) {
       return GST_GL_DISPLAY_TYPE_EGL;
     } else if (g_strstr_len (env, 6, "viv-fb")) {
       return GST_GL_DISPLAY_TYPE_VIV_FB;
     } else if (g_strstr_len (env, 3, "gbm")) {
       return GST_GL_DISPLAY_TYPE_GBM;
-    } else if (g_strstr_len (env, 10, "egl-device")) {
-      return GST_GL_DISPLAY_TYPE_EGL_DEVICE;
     } else if (g_strstr_len (env, 4, "eagl")) {
       return GST_GL_DISPLAY_TYPE_EAGL;
     } else if (g_strstr_len (env, 7, "android")) {
@@ -566,7 +560,7 @@ gst_gl_display_get_handle_type (GstGLDisplay * display)
 /**
  * gst_context_set_gl_display:
  * @context: a #GstContext
- * @display: (transfer none): resulting #GstGLDisplay
+ * @display: (transfer none) (nullable): resulting #GstGLDisplay
  *
  * Sets @display on @context
  *
@@ -592,7 +586,7 @@ gst_context_set_gl_display (GstContext * context, GstGLDisplay * display)
 /**
  * gst_context_get_gl_display:
  * @context: a #GstContext
- * @display: (out) (transfer full): resulting #GstGLDisplay
+ * @display: (out) (optional) (nullable) (transfer full): resulting #GstGLDisplay
  *
  * Returns: Whether @display was in @context
  *
@@ -620,9 +614,9 @@ gst_context_get_gl_display (GstContext * context, GstGLDisplay ** display)
 /**
  * gst_gl_display_create_context:
  * @display: a #GstGLDisplay
- * @other_context: (transfer none): other #GstGLContext to share resources with.
+ * @other_context: (transfer none) (nullable): other #GstGLContext to share resources with.
  * @p_context: (transfer full) (out): resulting #GstGLContext
- * @error: (allow-none): resulting #GError
+ * @error: resulting #GError
  *
  * It requires the display's object lock to be held.
  *
@@ -674,7 +668,7 @@ gst_gl_display_create_context (GstGLDisplay * display,
  * gst_gl_display_create_window:
  * @display: a #GstGLDisplay
  *
- * Returns: (transfer full): a new #GstGLWindow for @display or %NULL.
+ * Returns: (transfer full) (nullable): a new #GstGLWindow for @display or %NULL.
  */
 /* XXX: previous versions had documentation requiring the OBJECT lock to be
  * held when this fuction is called so that needs to always work. */
@@ -735,22 +729,22 @@ gst_gl_display_remove_window (GstGLDisplay * display, GstGLWindow * window)
   return ret;
 }
 
+#ifndef GST_REMOVE_DEPRECATED
 /**
  * gst_gl_display_find_window:
  * @display: a #GstGLDisplay
  * @data: (closure): some data to pass to @compare_func
  * @compare_func: (scope call): a comparison function to run
  *
- * Deprecated for gst_gl_display_retrieve_window().
- *
  * Execute @compare_func over the list of windows stored by @display.  The
  * first argument to @compare_func is the #GstGLWindow being checked and the
  * second argument is @data.
  *
- * Returns: (transfer none): The first #GstGLWindow that causes a match
+ * Returns: (transfer none) (nullable): The first #GstGLWindow that causes a match
  *          from @compare_func
  *
  * Since: 1.12
+ * Deprecated: 1.18: Use gst_gl_display_retrieve_window() instead.
  */
 GstGLWindow *
 gst_gl_display_find_window (GstGLDisplay * display, gpointer data,
@@ -764,6 +758,7 @@ gst_gl_display_find_window (GstGLDisplay * display, gpointer data,
 
   return ret;
 }
+#endif
 
 /**
  * gst_gl_display_retrieve_window:
@@ -775,7 +770,7 @@ gst_gl_display_find_window (GstGLDisplay * display, gpointer data,
  * first argument to @compare_func is the #GstGLWindow being checked and the
  * second argument is @data.
  *
- * Returns: (transfer full): The first #GstGLWindow that causes a match
+ * Returns: (transfer full) (nullable): The first #GstGLWindow that causes a match
  *          from @compare_func
  *
  * Since: 1.18
@@ -851,7 +846,7 @@ _get_gl_context_for_thread_unlocked (GstGLDisplay * display, GThread * thread)
  * @display: a #GstGLDisplay
  * @thread: a #GThread
  *
- * Returns: (transfer full): the #GstGLContext current on @thread or %NULL
+ * Returns: (transfer full) (nullable): the #GstGLContext current on @thread or %NULL
  *
  * Must be called with the object lock held.
  *

@@ -36,7 +36,7 @@
 #include <string.h>
 
 #include "gstelements_private.h"
-#include "../../gst/gst-i18n-lib.h"
+#include <glib/gi18n-lib.h>
 #include "gstidentity.h"
 #include "gstcoreelementselements.h"
 
@@ -262,7 +262,6 @@ gst_identity_class_init (GstIdentityClass * klass)
    * GstIdentity::handoff:
    * @identity: the identity instance
    * @buffer: the buffer that just has been received
-   * @pad: the pad that received it
    *
    * This signal gets emitted before passing the buffer downstream.
    */
@@ -570,14 +569,16 @@ gst_identity_src_event (GstBaseTransform * trans, GstEvent * event)
           &start, &stop_type, &stop);
 
       GST_OBJECT_LOCK (identity);
-      gst_segment_init (&identity->seek_segment, fmt);
-      if (!gst_segment_do_seek (&identity->seek_segment, rate, fmt,
-              flags, start_type, start, stop_type, stop, NULL)) {
-        GST_WARNING_OBJECT (identity, "Could not run seek %" GST_PTR_FORMAT,
-            event);
-        GST_OBJECT_UNLOCK (identity);
+      if (identity->single_segment) {
+        gst_segment_init (&identity->seek_segment, fmt);
+        if (!gst_segment_do_seek (&identity->seek_segment, rate, fmt,
+                flags, start_type, start, stop_type, stop, NULL)) {
+          GST_WARNING_OBJECT (identity, "Could not handle %" GST_PTR_FORMAT,
+              event);
+          GST_OBJECT_UNLOCK (identity);
 
-        return FALSE;
+          return FALSE;
+        }
       }
       GST_OBJECT_UNLOCK (identity);
 

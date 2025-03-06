@@ -1,6 +1,6 @@
 project('gstreamer', 'c',
-  version : '1.21.0.1',
-  meson_version : '>= 0.59',
+  version : '1.22.12.1',
+  meson_version : '>= 0.62',
   default_options : [ 'warning_level=1',
                       'buildtype=debugoptimized' ])
 
@@ -15,8 +15,6 @@ else
   gst_version_nano = 0
 endif
 gst_version_is_dev = gst_version_minor % 2 == 1 and gst_version_micro < 90
-
-host_system = host_machine.system()
 
 apiversion = '1.0'
 soversion = 0
@@ -33,6 +31,19 @@ libexecdir = get_option('libexecdir')
 helpers_install_dir = join_paths(libexecdir, 'gstreamer-1.0')
 
 cc = meson.get_compiler('c')
+host_system = host_machine.system()
+
+if host_system == 'darwin'
+  ios_test_code = '''#include <TargetConditionals.h>
+  #if ! TARGET_OS_IPHONE
+  #error "Not iOS/tvOS/watchOS/iPhoneSimulator"
+  #endif'''
+  if cc.compiles(ios_test_code, name : 'building for iOS')
+    host_system = 'ios'
+  endif
+
+  add_languages('objc', native: false, required: true)
+endif
 
 cdata = configuration_data()
 
@@ -47,32 +58,45 @@ if cc.get_id() == 'msvc'
       '/wd4244', # lossy type conversion (e.g. double -> int)
       '/wd4305', # truncating type conversion (e.g. double -> float)
       cc.get_supported_arguments(['/utf-8']), # set the input encoding to utf-8
-
-      # Enable some warnings on MSVC to match GCC/Clang behaviour
-      '/w14062', # enumerator 'identifier' in switch of enum 'enumeration' is not handled
-      '/w14101', # 'identifier' : unreferenced local variable
-      '/w14189', # 'identifier' : local variable is initialized but not referenced
   ]
+
+  if gst_version_is_dev
+    # Enable some warnings on MSVC to match GCC/Clang behaviour
+    msvc_args += cc.get_supported_arguments([
+      '/we4002', # too many actual parameters for macro 'identifier'
+      '/we4003', # not enough actual parameters for macro 'identifier'
+      '/we4013', # 'function' undefined; assuming extern returning int
+      '/we4020', # 'function' : too many actual parameters
+      '/we4027', # function declared without formal parameter list
+      '/we4029', # declared formal parameter list different from definition
+      '/we4033', # 'function' must return a value
+      '/we4045', # 'array' : array bounds overflow
+      '/we4047', # 'operator' : 'identifier1' differs in levels of indirection from 'identifier2'
+      '/we4053', # one void operand for '?:'
+      '/we4062', # enumerator 'identifier' in switch of enum 'enumeration' is not handled
+      '/we4098', # 'function' : void function returning a value
+      '/we4101', # 'identifier' : unreferenced local variable
+      '/we4189', # 'identifier' : local variable is initialized but not referenced
+    ])
+  endif
   add_project_arguments(msvc_args, language: 'c')
 elif cc.has_link_argument('-Wl,-Bsymbolic-functions')
   # FIXME: Add an option for this if people ask for it
   add_project_link_arguments('-Wl,-Bsymbolic-functions', language : 'c')
 endif
 
-# Symbol visibility
-have_visibility_hidden = false
-if cc.get_id() == 'msvc'
-  export_define = '__declspec(dllexport) extern'
-elif cc.has_argument('-fvisibility=hidden')
-  add_project_arguments('-fvisibility=hidden', language: 'c')
-  export_define = 'extern __attribute__ ((visibility ("default")))'
-  have_visibility_hidden = true
-else
-  export_define = 'extern'
+# glib doesn't support unloading, which means that unloading and reloading
+# any library that registers static types will fail
+if cc.has_link_argument('-Wl,-z,nodelete')
+  add_project_link_arguments('-Wl,-z,nodelete', language: 'c')
 endif
 
-# Passing this through the command line would be too messy
-cdata.set('GST_API_EXPORT', export_define)
+# Symbol visibility
+have_visibility_hidden = false
+if cc.has_argument('-fvisibility=hidden')
+  add_project_arguments('-fvisibility=hidden', language: 'c')
+  have_visibility_hidden = true
+endif
 
 # Disable strict aliasing
 if cc.has_argument('-fno-strict-aliasing')
@@ -258,7 +282,8 @@ if cc.has_function('localtime_r', prefix : '#include<time.h>')
   cdata.set('HAVE_DECL_LOCALTIME_R', 1)
 endif
 
-if cc.links('''#include <pthread.h>
+if cc.links('''#define _GNU_SOURCE
+               #include <pthread.h>
                int main() {
                  pthread_setname_np("example"); return 0;
                }''', name : 'pthread_setname_np(const char*)')
@@ -272,7 +297,7 @@ if cc.has_header_symbol('pthread.h', 'pthread_cond_timedwait_relative_np')
 endif
 
 # Check for futex(2)
-if cc.links('''#include <linux/futex.h>
+if cc.compiles('''#include <linux/futex.h>
                #include <sys/syscall.h>
                #include <unistd.h>
                int main (int argc, char ** argv) {
@@ -280,6 +305,15 @@ if cc.links('''#include <linux/futex.h>
                  return 0;
                }''', name : 'futex(2) system call')
   cdata.set('HAVE_FUTEX', 1)
+endif
+if cc.compiles('''#include <linux/futex.h>
+               #include <sys/syscall.h>
+               #include <unistd.h>
+               int main (int argc, char ** argv) {
+                 syscall (__NR_futex_time64, NULL, FUTEX_WAKE, FUTEX_WAIT);
+                 return 0;
+               }''', name : 'futex(2) system call')
+  cdata.set('HAVE_FUTEX_TIME64', 1)
 endif
 
 # Check for posix timers and monotonic clock
@@ -320,14 +354,6 @@ endif
 # All supported platforms have long long now
 cdata.set('HAVE_LONG_LONG', 1)
 
-# We only want to use the __declspec(dllexport/import) dance in GST_EXPORT when
-# building with MSVC
-if cc.get_id() == 'msvc'
-  cdata.set('GSTCONFIG_BUILT_WITH_MSVC', 1)
-else
-  cdata.set('GSTCONFIG_BUILT_WITH_MSVC', 0)
-endif
-
 # -------------------------------------------------------------------------------------
 # config.h things needed by libcheck
 # -------------------------------------------------------------------------------------
@@ -366,6 +392,11 @@ if not cc.has_members('struct itimerspec', 'it_interval', 'it_value',
 		      prefix : '#include <time.h>')
   cdata.set('STRUCT_ITIMERSPEC_DEFINITION_MISSING', 1)
 endif
+if host_system != 'windows'
+  cdata.set('HAVE_PIPE', 1)
+elif cc.has_function('_pipe', prefix : '#include <io.h>')
+  cdata.set('HAVE_PIPE', 1)
+endif
 
 # Platform deps; only ws2_32 and execinfo for now
 platform_deps = []
@@ -383,6 +414,23 @@ if host_system == 'windows'
   #endif'''
   if cc.compiles(code, name : 'building for UWP')
     building_for_uwp = true
+  endif
+
+  building_for_win7 = cc.compiles('''#include <windows.h>
+      #ifndef WINVER
+      #error "unknown minimum supported OS version"
+      #endif
+      #if (WINVER < _WIN32_WINNT_WIN7)
+      #error "Windows 7 API is not guaranteed"
+      #endif
+      ''',
+      name: 'building for Windows 7')
+
+  if not building_for_win7
+    add_project_arguments([
+      '-D_WIN32_WINNT=_WIN32_WINNT_WIN7',
+      '-DWINVER=_WIN32_WINNT_WIN7',
+    ], language: ['c', 'cpp'])
   endif
 endif
 
@@ -455,7 +503,6 @@ warning_flags = [
   '-Waddress',
   '-Waggregate-return',
   '-Wno-multichar',
-  '-Wdeclaration-after-statement',
   '-Wvla',
   '-Wpointer-arith',
 ]
@@ -484,21 +531,18 @@ configinc = include_directories('.')
 libsinc = include_directories('libs')
 privinc = include_directories('gst')
 
+glib_req = '>= 2.62.0'
+
 # Find dependencies
-glib_dep = dependency('glib-2.0', version : '>=2.56.0',
+glib_dep = dependency('glib-2.0', version: glib_req,
   fallback: ['glib', 'libglib_dep'])
-gobject_dep = dependency('gobject-2.0',
-  fallback: ['glib', 'libgobject_dep'])
-gmodule_dep = dependency('gmodule-2.0',
-  fallback: ['glib', 'libgmodule_dep'])
+gobject_dep = dependency('gobject-2.0')
+gmodule_dep = dependency('gmodule-no-export-2.0')
 if host_system == 'windows'
-    gio_dep = dependency('gio-2.0',
-        fallback: ['glib', 'libgio_dep'])
+    gio_dep = dependency('gio-2.0')
 else
-    gio_dep = [dependency('gio-2.0',
-                  fallback: ['glib', 'libgio_dep']),
-               dependency('gio-unix-2.0',
-                  fallback: ['glib', 'libgio_dep'])]
+    gio_dep = [dependency('gio-2.0'),
+               dependency('gio-unix-2.0')]
 endif
 
 mathlib = cc.find_library('m', required : false)
@@ -570,29 +614,30 @@ if get_option('default_library') == 'shared'
   # If we don't build static plugins there is no need to generate pc files
   plugins_pkgconfig_install_dir = disabler()
 endif
-pkgconfig_variables = ['exec_prefix=${prefix}',
-    'toolsdir=${exec_prefix}/bin',
-    'pluginsdir=${libdir}/gstreamer-1.0',
-    'datarootdir=${prefix}/share',
-    'datadir=${datarootdir}',
-    'girdir=${datadir}/gir-1.0',
-    'typelibdir=${libdir}/girepository-1.0',
-    'libexecdir=${prefix}/libexec',
-    'pluginscannerdir=${libexecdir}/gstreamer-1.0']
+pkgconfig_variables = [
+  'exec_prefix=${prefix}',
+  'toolsdir=${exec_prefix}/bin',
+  'pluginsdir=${libdir}/gstreamer-1.0',
+  'girdir=${datadir}/gir-1.0',
+  'typelibdir=${libdir}/girepository-1.0',
+  'pluginscannerdir=${libexecdir}/gstreamer-1.0'
+]
 pkgconfig_uninstalled_variables = ['exec_prefix=${prefix}',
 	'gstreamerdir=${prefix}/subprojects/gstreamer',
     'bashhelpersdir=${gstreamerdir}/data/bash-completion/helpers',
     'helpersdir=${gstreamerdir}/libs/gst/helpers']
 pkgconfig_subdirs = ['gstreamer-1.0']
+pkgconfig_libs = []
+if host_system == 'darwin'
+  pkgconfig_libs = ['-Wl,-rpath,${libdir}']
+endif
 
 static_build = get_option('default_library') == 'static'
-libraries = []
+gst_libraries = []
 subdir('gst')
 subdir('libs')
 subdir('plugins')
-if not get_option('tools').disabled()
-  subdir('tools')
-endif
+subdir('tools')
 subdir('tests')
 subdir('data')
 subdir('docs')
@@ -617,8 +662,15 @@ endif
 configure_file(output : 'config.h', configuration : cdata)
 install_data('gst-element-check-1.0.m4', install_dir : join_paths(get_option('datadir'), 'aclocal'))
 
+meson.add_dist_script('scripts/gen-changelog.py', meson.project_name(), '1.20.0', meson.project_version())
+
 plugin_names = []
+gst_plugins = []
 foreach plugin: plugins
+  pkgconfig.generate(plugin, install_dir: plugins_pkgconfig_install_dir)
+  dep = declare_dependency(link_with: plugin, variables: {'full_path': plugin.full_path()})
+  meson.override_dependency(plugin.name(), dep)
+  gst_plugins += [dep]
   if plugin.name().startswith('gst')
     plugin_names += [plugin.name().substring(3)]
   else

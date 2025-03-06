@@ -273,6 +273,8 @@ on_incoming_stream (GstElement * webrtc, GstPad * pad,
 static gboolean
 bus_watch_cb (GstBus * bus, GstMessage * message, gpointer user_data)
 {
+  GstPipeline *pipeline = user_data;
+
   switch (GST_MESSAGE_TYPE (message)) {
     case GST_MESSAGE_ERROR:
     {
@@ -296,6 +298,9 @@ bus_watch_cb (GstBus * bus, GstMessage * message, gpointer user_data)
       g_free (debug);
       break;
     }
+    case GST_MESSAGE_LATENCY:
+      gst_bin_recalculate_latency (GST_BIN (pipeline));
+      break;
     default:
       break;
   }
@@ -354,7 +359,7 @@ create_receiver_entry (SoupWebsocketConnection * connection)
       RTP_PAYLOAD_TYPE
       ",clock-rate=90000,packetization-mode=(string)1, profile-level-id=(string)42c016");
   g_signal_emit_by_name (receiver_entry->webrtcbin, "add-transceiver",
-      GST_WEBRTC_RTP_TRANSCEIVER_DIRECTION_RECVONLY, video_caps, NULL, &trans);
+      GST_WEBRTC_RTP_TRANSCEIVER_DIRECTION_RECVONLY, video_caps, &trans);
   gst_caps_unref (video_caps);
   gst_object_unref (trans);
 
@@ -365,7 +370,7 @@ create_receiver_entry (SoupWebsocketConnection * connection)
       G_CALLBACK (on_ice_candidate_cb), (gpointer) receiver_entry);
 
   bus = gst_pipeline_get_bus (GST_PIPELINE (receiver_entry->pipeline));
-  gst_bus_add_watch (bus, bus_watch_cb, NULL);
+  gst_bus_add_watch (bus, bus_watch_cb, receiver_entry->pipeline);
   gst_object_unref (bus);
 
   if (gst_element_set_state (receiver_entry->pipeline, GST_STATE_PLAYING) ==
@@ -387,8 +392,14 @@ destroy_receiver_entry (gpointer receiver_entry_ptr)
   g_assert (receiver_entry != NULL);
 
   if (receiver_entry->pipeline != NULL) {
+    GstBus *bus;
+
     gst_element_set_state (GST_ELEMENT (receiver_entry->pipeline),
         GST_STATE_NULL);
+
+    bus = gst_pipeline_get_bus (GST_PIPELINE (receiver_entry->pipeline));
+    gst_bus_remove_watch (bus);
+    gst_object_unref (bus);
 
     gst_object_unref (GST_OBJECT (receiver_entry->webrtcbin));
     gst_object_unref (GST_OBJECT (receiver_entry->pipeline));
@@ -490,7 +501,7 @@ soup_websocket_message_cb (G_GNUC_UNUSED SoupWebsocketConnection * connection,
     SoupWebsocketDataType data_type, GBytes * message, gpointer user_data)
 {
   gsize size;
-  gchar *data;
+  const gchar *data;
   gchar *data_string;
   const gchar *type_string;
   JsonNode *root_json;
@@ -502,14 +513,12 @@ soup_websocket_message_cb (G_GNUC_UNUSED SoupWebsocketConnection * connection,
   switch (data_type) {
     case SOUP_WEBSOCKET_DATA_BINARY:
       g_error ("Received unknown binary message, ignoring\n");
-      g_bytes_unref (message);
       return;
 
     case SOUP_WEBSOCKET_DATA_TEXT:
-      data = g_bytes_unref_to_data (message, &size);
+      data = g_bytes_get_data (message, &size);
       /* Convert to NULL-terminated string */
       data_string = g_strndup (data, size);
-      g_free (data);
       break;
 
     default:

@@ -36,7 +36,7 @@
 #include <string.h>
 
 #include <gst/gst.h>
-#include <gst/gst-i18n-plugin.h>
+#include <glib/gi18n-lib.h>
 #include <gst/pbutils/missing-plugins.h>
 
 #include "gstplay-enum.h"
@@ -119,6 +119,7 @@ struct _GstURIDecodeBin
   gboolean expose_allstreams;   /* Whether to expose unknown type streams or not */
 
   guint64 ring_buffer_max_size; /* 0 means disabled */
+  gboolean post_stream_topology;
 };
 
 struct _GstURIDecodeBinClass
@@ -186,6 +187,7 @@ enum
 #define DEFAULT_FORCE_SW_DECODERS   FALSE
 #define DEFAULT_EXPOSE_ALL_STREAMS  TRUE
 #define DEFAULT_RING_BUFFER_MAX_SIZE 0
+#define DEFAULT_POST_STREAM_TOPOLOGY FALSE
 
 enum
 {
@@ -201,7 +203,8 @@ enum
   PROP_USE_BUFFERING,
   PROP_FORCE_SW_DECODERS,
   PROP_EXPOSE_ALL_STREAMS,
-  PROP_RING_BUFFER_MAX_SIZE
+  PROP_RING_BUFFER_MAX_SIZE,
+  PROP_POST_STREAM_TOPOLOGY
 };
 
 static guint gst_uri_decode_bin_signals[LAST_SIGNAL] = { 0 };
@@ -464,7 +467,7 @@ gst_uri_decode_bin_class_init (GstURIDecodeBinClass * klass)
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
   /**
-   * GstURIDecodeBin::download:
+   * GstURIDecodeBin:download:
    *
    * For certain media type, enable download buffering.
    */
@@ -473,7 +476,7 @@ gst_uri_decode_bin_class_init (GstURIDecodeBinClass * klass)
           "Attempt download buffering when buffering network streams",
           DEFAULT_DOWNLOAD, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
   /**
-   * GstURIDecodeBin::use-buffering:
+   * GstURIDecodeBin:use-buffering:
    *
    * Emit BUFFERING messages based on low-/high-percent thresholds of the
    * demuxed or parsed data.
@@ -487,7 +490,7 @@ gst_uri_decode_bin_class_init (GstURIDecodeBinClass * klass)
           DEFAULT_USE_BUFFERING, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
   /**
-   * GstURIDecodeBin::force-sw-decoders:
+   * GstURIDecodeBin:force-sw-decoders:
    *
    * While auto-plugging, if set to %TRUE, those decoders within
    * "Hardware" klass will be ignored. Otherwise they will be tried.
@@ -501,7 +504,7 @@ gst_uri_decode_bin_class_init (GstURIDecodeBinClass * klass)
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
   /**
-   * GstURIDecodeBin::expose-all-streams:
+   * GstURIDecodeBin:expose-all-streams:
    *
    * Expose streams of unknown type.
    *
@@ -517,7 +520,7 @@ gst_uri_decode_bin_class_init (GstURIDecodeBinClass * klass)
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
   /**
-   * GstURIDecodeBin::ring-buffer-max-size:
+   * GstURIDecodeBin:ring-buffer-max-size:
    *
    * The maximum size of the ring buffer in kilobytes. If set to 0, the ring
    * buffer is disabled. Default is 0.
@@ -527,6 +530,19 @@ gst_uri_decode_bin_class_init (GstURIDecodeBinClass * klass)
           "Max. ring buffer size (bytes)",
           "Max. amount of data in the ring buffer (bytes, 0 = ring buffer disabled)",
           0, G_MAXUINT, DEFAULT_RING_BUFFER_MAX_SIZE,
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+
+  /**
+   * GstURIDecodeBin:post-stream-topology
+   *
+   * Post stream-topology messages on the bus every time the topology changes.
+   *
+   * Since: 1.22
+   */
+  g_object_class_install_property (gobject_class, PROP_POST_STREAM_TOPOLOGY,
+      g_param_spec_boolean ("post-stream-topology", "Post Stream Topology",
+          "Post stream-topology messages",
+          DEFAULT_POST_STREAM_TOPOLOGY,
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
   /**
@@ -850,6 +866,9 @@ gst_uri_decode_bin_set_property (GObject * object, guint prop_id,
     case PROP_RING_BUFFER_MAX_SIZE:
       dec->ring_buffer_max_size = g_value_get_uint64 (value);
       break;
+    case PROP_POST_STREAM_TOPOLOGY:
+      dec->post_stream_topology = g_value_get_boolean (value);
+      break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
@@ -912,6 +931,9 @@ gst_uri_decode_bin_get_property (GObject * object, guint prop_id,
       break;
     case PROP_RING_BUFFER_MAX_SIZE:
       g_value_set_uint64 (value, dec->ring_buffer_max_size);
+      break;
+    case PROP_POST_STREAM_TOPOLOGY:
+      g_value_set_boolean (value, dec->post_stream_topology);
       break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -1478,23 +1500,23 @@ no_source:
 }
 
 /**
- * has_all_raw_caps:
+ * has_raw_caps:
  * @pad: a #GstPad
  * @all_raw: pointer to hold the result
  *
  * check if the caps of the pad are all raw. The caps are all raw if
  * all of its structures contain audio/x-raw or video/x-raw.
  *
- * Returns: %FALSE @pad has no caps. Else TRUE and @all_raw set t the result.
+ * Returns: %FALSE @pad caps are not set and raw
  */
 static gboolean
-has_all_raw_caps (GstPad * pad, GstCaps * rawcaps, gboolean * all_raw)
+has_raw_caps (GstPad * pad, GstCaps * rawcaps)
 {
   GstCaps *caps, *intersection;
   gint capssize;
   gboolean res = FALSE;
 
-  caps = gst_pad_query_caps (pad, NULL);
+  caps = gst_pad_get_current_caps (pad);
   if (caps == NULL)
     return FALSE;
 
@@ -1506,11 +1528,8 @@ has_all_raw_caps (GstPad * pad, GstCaps * rawcaps, gboolean * all_raw)
     goto done;
 
   intersection = gst_caps_intersect (caps, rawcaps);
-  *all_raw = !gst_caps_is_empty (intersection)
-      && (gst_caps_get_size (intersection) == capssize);
+  res = !gst_caps_is_empty (intersection);
   gst_caps_unref (intersection);
-
-  res = TRUE;
 
 done:
   gst_caps_unref (caps);
@@ -1593,16 +1612,15 @@ analyse_source (GstURIDecodeBin * decoder, gboolean * is_raw,
         *have_out = TRUE;
 
         /* if FALSE, this pad has no caps and we continue with the next pad. */
-        if (!has_all_raw_caps (pad, rawcaps, is_raw)) {
+        if (!has_raw_caps (pad, rawcaps)) {
           gst_object_unref (pad);
           g_value_reset (&item);
           break;
-        }
-
-        /* caps on source pad are all raw, we can add the pad */
-        if (*is_raw) {
+        } else {
+          /* caps on source pad are all raw, we can add the pad */
           GstElement *outelem;
 
+          *is_raw = TRUE;
           if (use_queue) {
             GstPad *sinkpad;
 
@@ -1883,9 +1901,11 @@ make_decoder (GstURIDecodeBin * decoder)
   if (decoder->caps)
     g_object_set (decodebin, "caps", decoder->caps, NULL);
 
-  /* Propagate expose-all-streams and connection-speed properties */
+  /* Propagate expose-all-streams, connection-speed properties
+   * and post_stream_topology */
   g_object_set (decodebin, "expose-all-streams", decoder->expose_allstreams,
-      "connection-speed", decoder->connection_speed / 1000, NULL);
+      "connection-speed", decoder->connection_speed / 1000,
+      "post-stream-topology", decoder->post_stream_topology, NULL);
 
   if (!decoder->is_stream || decoder->is_adaptive) {
     /* propagate the use-buffering property but only when we are not already
@@ -2169,7 +2189,6 @@ static void
 source_new_pad (GstElement * element, GstPad * pad, GstURIDecodeBin * bin)
 {
   GstElement *decoder;
-  gboolean is_raw;
   GstCaps *rawcaps;
   GstPad *sinkpad;
 
@@ -2181,8 +2200,10 @@ source_new_pad (GstElement * element, GstPad * pad, GstURIDecodeBin * bin)
   if (!rawcaps)
     rawcaps = DEFAULT_CAPS;
 
-  /* if this is a pad with all raw caps, we can expose it */
-  if (has_all_raw_caps (pad, rawcaps, &is_raw) && is_raw) {
+  /* if this is a pad with all raw caps, we can expose it.
+   * But if stream-topology needs to be posted, we need to
+   * plug a decodebin so it can build the topology for us to forward. */
+  if (!bin->post_stream_topology && has_raw_caps (pad, rawcaps)) {
     /* it's all raw, create output pads. */
     GST_URI_DECODE_BIN_UNLOCK (bin);
     gst_caps_unref (rawcaps);
@@ -2288,6 +2309,10 @@ setup_source (GstURIDecodeBin * decoder)
   /* stream admin setup */
   decoder->streams = g_hash_table_new_full (NULL, NULL, NULL, free_stream);
 
+  if (gst_element_set_state (source,
+          GST_STATE_READY) != GST_STATE_CHANGE_SUCCESS)
+    goto state_fail;
+
   /* see if the source element emits raw audio/video all by itself,
    * if so, we can create streams for the pads and be done with it.
    * Also check that is has source pads, if not, we assume it will
@@ -2349,6 +2374,12 @@ setup_source (GstURIDecodeBin * decoder)
 no_source:
   {
     /* error message was already posted */
+    return FALSE;
+  }
+state_fail:
+  {
+    GST_ELEMENT_ERROR (decoder, CORE, FAILED,
+        (_("Source element can't be prepared")), (NULL));
     return FALSE;
   }
 invalid_source:

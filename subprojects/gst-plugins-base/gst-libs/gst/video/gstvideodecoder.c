@@ -446,6 +446,9 @@ struct _GstVideoDecoderPrivate
   gint64 min_latency;
   gint64 max_latency;
 
+  /* Tracks whether the latency message was posted at least once */
+  gboolean posted_latency_msg;
+
   /* upstream stream tags (global tags are passed through as-is) */
   GstTagList *upstream_tags;
 
@@ -538,6 +541,9 @@ static gboolean gst_video_decoder_transform_meta_default (GstVideoDecoder *
 
 static gboolean gst_video_decoder_handle_missing_data_default (GstVideoDecoder *
     decoder, GstClockTime timestamp, GstClockTime duration);
+
+static void gst_video_decoder_replace_input_buffer (GstVideoDecoder * decoder,
+    GstVideoCodecFrame * frame, GstBuffer ** dest_buffer);
 
 static void gst_video_decoder_copy_metas (GstVideoDecoder * decoder,
     GstVideoCodecFrame * frame, GstBuffer * src_buffer,
@@ -1492,6 +1498,7 @@ gst_video_decoder_sink_event_default (GstVideoDecoder * decoder,
          */
         forward_immediate = TRUE;
       } else {
+        GST_VIDEO_DECODER_STREAM_UNLOCK (decoder);
         gst_clear_event (&event);
       }
       break;
@@ -2035,8 +2042,8 @@ gst_video_decoder_src_query (GstPad * pad, GstObject * parent, GstQuery * query)
 /**
  * gst_video_decoder_proxy_getcaps:
  * @decoder: a #GstVideoDecoder
- * @caps: (allow-none): initial caps
- * @filter: (allow-none): filter caps
+ * @caps: (nullable): initial caps
+ * @filter: (nullable): filter caps
  *
  * Returns caps that express @caps (or sink template caps if @caps == NULL)
  * restricted to resolution/format/... combinations supported by downstream
@@ -2280,18 +2287,6 @@ gst_video_decoder_get_buffer_info_at_offset (GstVideoDecoder *
       GST_TIME_ARGS (*pts), GST_TIME_ARGS (*dts), *flags, got_offset, offset);
 }
 
-#if !GLIB_CHECK_VERSION(2, 60, 0)
-#define g_queue_clear_full queue_clear_full
-static void
-queue_clear_full (GQueue * queue, GDestroyNotify free_func)
-{
-  gpointer data;
-
-  while ((data = g_queue_pop_head (queue)) != NULL)
-    free_func (data);
-}
-#endif
-
 static void
 gst_video_decoder_clear_queues (GstVideoDecoder * dec)
 {
@@ -2382,6 +2377,8 @@ gst_video_decoder_reset (GstVideoDecoder * decoder, gboolean full,
 
     priv->dropped = 0;
     priv->processed = 0;
+
+    priv->posted_latency_msg = FALSE;
 
     priv->decode_frame_number = 0;
     priv->base_picture_number = 0;
@@ -2476,11 +2473,7 @@ gst_video_decoder_chain_forward (GstVideoDecoder * decoder,
       GST_VIDEO_CODEC_FRAME_SET_SYNC_POINT (frame);
     }
 
-    if (frame->input_buffer) {
-      gst_video_decoder_copy_metas (decoder, frame, frame->input_buffer, buf);
-      gst_buffer_unref (frame->input_buffer);
-    }
-    frame->input_buffer = buf;
+    gst_video_decoder_replace_input_buffer (decoder, frame, &buf);
 
     if (decoder->input_segment.rate < 0.0) {
       priv->parse_gather = g_list_prepend (priv->parse_gather, frame);
@@ -3276,6 +3269,9 @@ gst_video_decoder_drop_frame (GstVideoDecoder * dec, GstVideoCodecFrame * frame)
   /* now free the frame */
   gst_video_decoder_release_frame (dec, frame);
 
+  /* store that we have valid decoded data */
+  dec->priv->had_output_data = TRUE;
+
   GST_VIDEO_DECODER_STREAM_UNLOCK (dec);
 
   return GST_FLOW_OK;
@@ -3358,7 +3354,8 @@ foreach_metadata (GstBuffer * inbuf, GstMeta ** meta, gpointer user_data)
   const GstMetaInfo *info = (*meta)->info;
   gboolean do_copy = FALSE;
 
-  if (gst_meta_api_type_has_tag (info->api, _gst_meta_tag_memory)) {
+  if (gst_meta_api_type_has_tag (info->api, _gst_meta_tag_memory)
+      || gst_meta_api_type_has_tag (info->api, _gst_meta_tag_memory_reference)) {
     /* never call the transform_meta with memory specific metadata */
     GST_DEBUG_OBJECT (decoder, "not copying memory specific metadata %s",
         g_type_name (info->api));
@@ -3401,6 +3398,20 @@ gst_video_decoder_copy_metas (GstVideoDecoder * decoder,
           "Can't copy metadata because input frame disappeared");
     }
   }
+}
+
+static void
+gst_video_decoder_replace_input_buffer (GstVideoDecoder * decoder,
+    GstVideoCodecFrame * frame, GstBuffer ** dest_buffer)
+{
+  if (frame->input_buffer) {
+    *dest_buffer = gst_buffer_make_writable (*dest_buffer);
+    gst_video_decoder_copy_metas (decoder, frame, frame->input_buffer,
+        *dest_buffer);
+    gst_buffer_unref (frame->input_buffer);
+  }
+
+  frame->input_buffer = *dest_buffer;
 }
 
 /**
@@ -3843,12 +3854,8 @@ gst_video_decoder_have_frame (GstVideoDecoder * decoder)
     buffer = gst_buffer_new_and_alloc (0);
   }
 
-  if (priv->current_frame->input_buffer) {
-    gst_video_decoder_copy_metas (decoder, priv->current_frame,
-        priv->current_frame->input_buffer, buffer);
-    gst_buffer_unref (priv->current_frame->input_buffer);
-  }
-  priv->current_frame->input_buffer = buffer;
+  gst_video_decoder_replace_input_buffer (decoder, priv->current_frame,
+      &buffer);
 
   gst_video_decoder_get_buffer_info_at_offset (decoder,
       priv->frame_offset, &pts, &dts, &duration, &flags);
@@ -4016,7 +4023,7 @@ gst_video_decoder_decode_frame (GstVideoDecoder * decoder,
  *
  * Get the #GstVideoCodecState currently describing the output stream.
  *
- * Returns: (transfer full): #GstVideoCodecState describing format of video data.
+ * Returns: (transfer full) (nullable): #GstVideoCodecState describing format of video data.
  */
 GstVideoCodecState *
 gst_video_decoder_get_output_state (GstVideoDecoder * decoder)
@@ -4084,7 +4091,7 @@ _set_interlaced_output_state (GstVideoDecoder * decoder,
  * @fmt: a #GstVideoFormat
  * @width: The width in pixels
  * @height: The height in pixels
- * @reference: (allow-none) (transfer none): An optional reference #GstVideoCodecState
+ * @reference: (nullable) (transfer none): An optional reference #GstVideoCodecState
  *
  * Creates a new #GstVideoCodecState with the specified @fmt, @width and @height
  * as the output state for the decoder.
@@ -4101,7 +4108,7 @@ _set_interlaced_output_state (GstVideoDecoder * decoder,
  * The new output state will only take effect (set on pads and buffers) starting
  * from the next call to #gst_video_decoder_finish_frame().
  *
- * Returns: (transfer full): the newly configured output state.
+ * Returns: (transfer full) (nullable): the newly configured output state.
  */
 GstVideoCodecState *
 gst_video_decoder_set_output_state (GstVideoDecoder * decoder,
@@ -4119,12 +4126,12 @@ gst_video_decoder_set_output_state (GstVideoDecoder * decoder,
  * @width: The width in pixels
  * @height: The height in pixels
  * @interlace_mode: A #GstVideoInterlaceMode
- * @reference: (allow-none) (transfer none): An optional reference #GstVideoCodecState
+ * @reference: (nullable) (transfer none): An optional reference #GstVideoCodecState
  *
  * Same as #gst_video_decoder_set_output_state() but also allows you to also set
  * the interlacing mode.
  *
- * Returns: (transfer full): the newly configured output state.
+ * Returns: (transfer full) (nullable): the newly configured output state.
  *
  * Since: 1.16.
  */
@@ -4144,7 +4151,7 @@ gst_video_decoder_set_interlaced_output_state (GstVideoDecoder * decoder,
  *
  * Get the oldest pending unfinished #GstVideoCodecFrame
  *
- * Returns: (transfer full): oldest pending unfinished #GstVideoCodecFrame.
+ * Returns: (transfer full) (nullable): oldest pending unfinished #GstVideoCodecFrame.
  */
 GstVideoCodecFrame *
 gst_video_decoder_get_oldest_frame (GstVideoDecoder * decoder)
@@ -4166,7 +4173,7 @@ gst_video_decoder_get_oldest_frame (GstVideoDecoder * decoder)
  *
  * Get a pending unfinished #GstVideoCodecFrame
  *
- * Returns: (transfer full): pending unfinished #GstVideoCodecFrame identified by @frame_number.
+ * Returns: (transfer full) (nullable): pending unfinished #GstVideoCodecFrame identified by @frame_number.
  */
 GstVideoCodecFrame *
 gst_video_decoder_get_frame (GstVideoDecoder * decoder, int frame_number)
@@ -4575,7 +4582,7 @@ gst_video_decoder_negotiate (GstVideoDecoder * decoder)
  * You should use gst_video_decoder_allocate_output_frame() instead of this
  * function, if possible at all.
  *
- * Returns: (transfer full): allocated buffer, or NULL if no buffer could be
+ * Returns: (transfer full) (nullable): allocated buffer, or NULL if no buffer could be
  *     allocated (e.g. when downstream is flushing or shutting down)
  */
 GstBuffer *
@@ -5071,32 +5078,49 @@ gst_video_decoder_get_estimate_rate (GstVideoDecoder * dec)
  * @min_latency: minimum latency
  * @max_latency: maximum latency
  *
- * Lets #GstVideoDecoder sub-classes tell the baseclass what the decoder
- * latency is. Will also post a LATENCY message on the bus so the pipeline
- * can reconfigure its global latency.
+ * Lets #GstVideoDecoder sub-classes tell the baseclass what the decoder latency
+ * is. If the provided values changed from previously provided ones, this will
+ * also post a LATENCY message on the bus so the pipeline can reconfigure its
+ * global latency.
  */
 void
 gst_video_decoder_set_latency (GstVideoDecoder * decoder,
     GstClockTime min_latency, GstClockTime max_latency)
 {
+  gboolean post_message = FALSE;
   g_return_if_fail (GST_CLOCK_TIME_IS_VALID (min_latency));
   g_return_if_fail (max_latency >= min_latency);
 
+  GST_DEBUG_OBJECT (decoder,
+      "min_latency:%" GST_TIME_FORMAT " max_latency:%" GST_TIME_FORMAT,
+      GST_TIME_ARGS (min_latency), GST_TIME_ARGS (max_latency));
+
   GST_OBJECT_LOCK (decoder);
-  decoder->priv->min_latency = min_latency;
-  decoder->priv->max_latency = max_latency;
+  if (decoder->priv->min_latency != min_latency) {
+    decoder->priv->min_latency = min_latency;
+    post_message = TRUE;
+  }
+  if (decoder->priv->max_latency != max_latency) {
+    decoder->priv->max_latency = max_latency;
+    post_message = TRUE;
+  }
+  if (!decoder->priv->posted_latency_msg) {
+    decoder->priv->posted_latency_msg = TRUE;
+    post_message = TRUE;
+  }
   GST_OBJECT_UNLOCK (decoder);
 
-  gst_element_post_message (GST_ELEMENT_CAST (decoder),
-      gst_message_new_latency (GST_OBJECT_CAST (decoder)));
+  if (post_message)
+    gst_element_post_message (GST_ELEMENT_CAST (decoder),
+        gst_message_new_latency (GST_OBJECT_CAST (decoder)));
 }
 
 /**
  * gst_video_decoder_get_latency:
  * @decoder: a #GstVideoDecoder
- * @min_latency: (out) (allow-none): address of variable in which to store the
+ * @min_latency: (out) (optional): address of variable in which to store the
  *     configured minimum latency, or %NULL
- * @max_latency: (out) (allow-none): address of variable in which to store the
+ * @max_latency: (out) (optional): address of variable in which to store the
  *     configured mximum latency, or %NULL
  *
  * Query the configured decoder latency. Results will be returned via
@@ -5117,7 +5141,7 @@ gst_video_decoder_get_latency (GstVideoDecoder * decoder,
 /**
  * gst_video_decoder_merge_tags:
  * @decoder: a #GstVideoDecoder
- * @tags: (allow-none): a #GstTagList to merge, or NULL to unset
+ * @tags: (nullable): a #GstTagList to merge, or NULL to unset
  *     previously-set tags
  * @mode: the #GstTagMergeMode to use, usually #GST_TAG_MERGE_REPLACE
  *
@@ -5160,7 +5184,7 @@ gst_video_decoder_merge_tags (GstVideoDecoder * decoder,
  * gst_video_decoder_get_buffer_pool:
  * @decoder: a #GstVideoDecoder
  *
- * Returns: (transfer full): the instance of the #GstBufferPool used
+ * Returns: (transfer full) (nullable): the instance of the #GstBufferPool used
  * by the decoder; free it after use it
  */
 GstBufferPool *
@@ -5177,9 +5201,9 @@ gst_video_decoder_get_buffer_pool (GstVideoDecoder * decoder)
 /**
  * gst_video_decoder_get_allocator:
  * @decoder: a #GstVideoDecoder
- * @allocator: (out) (allow-none) (transfer full): the #GstAllocator
+ * @allocator: (out) (optional) (nullable) (transfer full): the #GstAllocator
  * used
- * @params: (out) (allow-none) (transfer full): the
+ * @params: (out) (optional) (transfer full): the
  * #GstAllocationParams of @allocator
  *
  * Lets #GstVideoDecoder sub-classes to know the memory @allocator

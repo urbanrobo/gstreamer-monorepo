@@ -8,6 +8,7 @@ KNOWN_ISSUES = {
             r"^validate\.((?!glvideomixer).)*$",
             r"^validate\.((?!launch_pipeline).)*$",
             r"^validate\.((?!rtsp*).)*$",
+            r"^validate\.((?!dash*).)*$",
         ],
         "max_retries": 2,
     },
@@ -247,5 +248,5 @@ KNOWN_ISSUES = {
                 "issue-id": "transcoded-file-wrong-duration",
             },
         ]
-    }
+    },
 }

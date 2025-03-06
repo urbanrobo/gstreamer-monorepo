@@ -16,6 +16,11 @@ option('rs', type : 'feature', value : 'disabled')
 option('gst-examples', type : 'feature', value : 'auto', description : 'Build gst-examples')
 option('tls', type : 'feature', value : 'auto', description : 'TLS support using glib-networking')
 option('qt5', type : 'feature', value : 'auto', description : 'Qt5 Support')
+option('tools', type : 'feature', value : 'auto', yield : true, description : 'Build command line tools')
+
+# Build for fuzzing
+option('oss_fuzz', type : 'feature', value : 'disabled',
+       description: 'Use fuzzing build environment')
 
 # Other options
 option('custom_subprojects', type : 'string', value : '', description : 'Comma-separated project names')
@@ -33,6 +38,7 @@ option('gst-full-device-providers', type : 'string', value : '',
   description : '''List of device providers to expose in gstreamer-full's ABI with the syntax plugin1:dp1;plugin2:dp1:dp2. By default '' will export all device provider of the enabled plugin.''')
 option('gst-full-dynamic-types', type : 'string', value : '',
   description : '''List of dynamic types to expose in gstreamer-full's ABI with the syntax plugin:dt1,dt2. By default '' will export all device provider of the enabled plugin.''')
+option('orc-source', type: 'combo', choices: ['system', 'subproject', 'auto'], value: 'subproject')
 
 # License-related feature options
 option('gpl', type: 'feature', value: 'disabled',
@@ -46,3 +52,13 @@ option('nls', type : 'feature', value : 'auto', description : 'Enable native lan
 option('orc', type : 'feature', value : 'auto', description : 'Enable Optimized Inner Loop Runtime Compiler')
 option('doc', type : 'feature', value : 'auto', description : 'Generate API documentation with hotdoc')
 option('gtk_doc', type : 'feature', value : 'disabled', description : 'Generate API documentation with gtk-doc')
+
+option('package-origin', type : 'string', value : 'Unknown package origin', yield : true,
+       description : 'package origin URL to use in plugins')
+
+option('gobject-cast-checks', type : 'feature', value : 'auto', yield : true,
+       description: 'Enable run-time GObject cast checks (auto = enabled for development, disabled for stable releases)')
+option('glib-asserts', type : 'feature', value : 'enabled', yield : true,
+       description: 'Enable GLib assertion (auto = enabled for development, disabled for stable releases)')
+option('glib-checks', type : 'feature', value : 'enabled', yield : true,
+       description: 'Enable GLib checks such as API guards (auto = enabled for development, disabled for stable releases)')

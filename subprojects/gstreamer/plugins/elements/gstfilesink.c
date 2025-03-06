@@ -38,7 +38,7 @@
 #  include "config.h"
 #endif
 
-#include "../../gst/gst-i18n-lib.h"
+#include <glib/gi18n-lib.h>
 
 #include <gst/gst.h>
 #include <glib/gstdio.h>
@@ -152,6 +152,9 @@ gst_fopen (const gchar * filename, const gchar * mode, gboolean o_sync)
     flags |= O_SYNC;
 
   fd = open (filename, flags, 0666);
+
+  if (fd < 0)
+    return NULL;
 
   retval = fdopen (fd, mode);
   return retval;

@@ -167,7 +167,8 @@ GST_START_TEST (rtpreddec_main_block)
   bufout = gst_harness_push_and_pull (h, bufinp);
   fail_unless (gst_rtp_buffer_map (bufout, GST_MAP_READ, &rtp));
   fail_unless_equals_int (GST_BUFFER_TIMESTAMP (bufout), gst_ts);
-  fail_unless_equals_int (GST_BUFFER_FLAGS (bufout), bufinp_flags);
+  fail_unless_equals_int (GST_BUFFER_FLAGS (bufout),
+      bufinp_flags | GST_BUFFER_FLAG_MARKER);
   fail_unless_equals_int (gst_buffer_get_size (bufout),
       gst_rtp_buffer_calc_packet_len (sizeof (out_data), 0, csrc_count));
   fail_unless_equals_int (gst_rtp_buffer_get_timestamp (&rtp),
@@ -397,7 +398,7 @@ GST_START_TEST (rtpreddec_invalid)
   bufinp =
       _new_rtp_buffer (FALSE, 0, PT_RED, 1, TIMESTAMP_NTH (1), 0xabe2b0b, 1);
   fail_unless (gst_rtp_buffer_map (bufinp, GST_MAP_WRITE, &rtp));
-  memcpy (gst_rtp_buffer_get_payload (&rtp), &data, sizeof (data));
+  memcpy (gst_rtp_buffer_get_payload (&rtp), &data, 1);
   gst_rtp_buffer_unmap (&rtp);
   _push_and_check_didnt_go_through (h, bufinp);
 
@@ -405,7 +406,7 @@ GST_START_TEST (rtpreddec_invalid)
   bufinp =
       _new_rtp_buffer (FALSE, 0, PT_RED, 2, TIMESTAMP_NTH (2), 0xabe2b0b, 4);
   fail_unless (gst_rtp_buffer_map (bufinp, GST_MAP_WRITE, &rtp));
-  memcpy (gst_rtp_buffer_get_payload (&rtp), &data, sizeof (data));
+  memcpy (gst_rtp_buffer_get_payload (&rtp), &data, 4);
   gst_rtp_buffer_unmap (&rtp);
   _push_and_check_didnt_go_through (h, bufinp);
 

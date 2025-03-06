@@ -1,22 +1,20 @@
 #!/usr/bin/env python3
 
 import argparse
-import contextlib
 import glob
 import json
 import os
 import platform
 import re
-import site
 import shlex
 import shutil
 import subprocess
-import sys
 import tempfile
 import pathlib
 import signal
 from functools import lru_cache
 from pathlib import PurePath, Path
+from sys import exit
 
 from typing import Any
 
@@ -42,7 +40,7 @@ SHAREDLIB_REG = re.compile(r'\.so|\.dylib|\.dll')
 GSTPLUGIN_FILEPATH_REG_TEMPLATE = r'.*/{libdir}/gstreamer-1.0/[^/]+$'
 GSTPLUGIN_FILEPATH_REG = None
 
-BC_RC =  '''
+BC_RC = '''
 BASH_COMPLETION_SCRIPTS="{bash_completions}"
 BASH_COMPLETION_PATHS="{bash_completions_paths}"
 for p in $BASH_COMPLETION_PATHS; do
@@ -71,6 +69,7 @@ def listify(o):
         return o
     raise AssertionError('Object {!r} must be a string or a list'.format(o))
 
+
 def stringify(o):
     if isinstance(o, str):
         return o
@@ -79,6 +78,7 @@ def stringify(o):
             return o[0]
         raise AssertionError('Did not expect object {!r} to have more than one element'.format(o))
     raise AssertionError('Object {!r} must be a string or a list'.format(o))
+
 
 def prepend_env_var(env, var, value, sysroot):
     if var is None:
@@ -96,6 +96,7 @@ def prepend_env_var(env, var, value, sysroot):
     env[var] = val + env_val
     env[var] = env[var].replace(os.pathsep + os.pathsep, os.pathsep).strip(os.pathsep)
 
+
 def get_target_install_filename(target, filename):
     '''
     Checks whether this file is one of the files installed by the target
@@ -106,9 +107,10 @@ def get_target_install_filename(target, filename):
             return install_filename
     return None
 
+
 def get_pkgconfig_variable_from_pcfile(pcfile, varname):
     variables = {}
-    substre = re.compile('\$\{[^${}]+\}')
+    substre = re.compile(r'\$\{[^${}]+\}')
     with pcfile.open('r', encoding='utf-8') as f:
         for line in f:
             if '=' not in line:
@@ -122,6 +124,7 @@ def get_pkgconfig_variable_from_pcfile(pcfile, varname):
                 value = value.replace(k, v)
             variables[key] = value
     return variables.get(varname, '')
+
 
 @lru_cache()
 def get_pkgconfig_variable(builddir, pcname, varname):
@@ -147,6 +150,7 @@ def is_gio_module(target, filename, builddir):
         return False
     return True
 
+
 def is_library_target_and_not_plugin(target, filename):
     '''
     Don't add plugins to PATH/LD_LIBRARY_PATH because:
@@ -168,6 +172,7 @@ def is_library_target_and_not_plugin(target, filename):
     if GSTPLUGIN_FILEPATH_REG.search(install_filename.replace('\\', '/')):
         return False
     return True
+
 
 def is_binary_target_and_in_path(target, filename, bindir):
     if target['type'] != 'executable':
@@ -199,6 +204,7 @@ def get_wine_subprocess_env(options, env):
     env['WINEDEBUG'] = 'fixme-all'
 
     return env
+
 
 def setup_gdb(options):
     python_paths = set()
@@ -242,32 +248,34 @@ def setup_gdb(options):
 
     return python_paths
 
-def is_bash_completion_available (options):
-    return  os.path.exists(os.path.join(options.builddir, 'subprojects/gstreamer/data/bash-completion/helpers/gst'))
+
+def is_bash_completion_available(options):
+    return os.path.exists(os.path.join(options.builddir, 'subprojects/gstreamer/data/bash-completion/helpers/gst'))
+
 
 def get_subprocess_env(options, gst_version):
     env = os.environ.copy()
 
     env["CURRENT_GST"] = os.path.normpath(SCRIPTDIR)
     env["GST_VERSION"] = gst_version
-    prepend_env_var (env, "GST_VALIDATE_SCENARIOS_PATH", os.path.normpath(
+    prepend_env_var(env, "GST_VALIDATE_SCENARIOS_PATH", os.path.normpath(
         "%s/subprojects/gst-devtools/validate/data/scenarios" % SCRIPTDIR),
         options.sysroot)
     env["GST_VALIDATE_PLUGIN_PATH"] = os.path.normpath(
         "%s/subprojects/gst-devtools/validate/plugins" % options.builddir)
-    prepend_env_var (env, "GST_VALIDATE_APPS_DIR", os.path.normpath(
+    prepend_env_var(env, "GST_VALIDATE_APPS_DIR", os.path.normpath(
         "%s/subprojects/gst-editing-services/tests/validate" % SCRIPTDIR),
         options.sysroot)
-    env["GST_ENV"] = 'gst-' + gst_version
+    env["GST_ENV"] = gst_version
     env["GST_REGISTRY"] = os.path.normpath(options.builddir + "/registry.dat")
     prepend_env_var(env, "PATH", os.path.normpath(
         "%s/subprojects/gst-devtools/validate/tools" % options.builddir),
         options.sysroot)
 
-    prepend_env_var (env, "GST_VALIDATE_SCENARIOS_PATH", os.path.normpath(
+    prepend_env_var(env, "GST_VALIDATE_SCENARIOS_PATH", os.path.normpath(
         "%s/subprojects/gst-examples/webrtc/check/validate/scenarios" %
         SCRIPTDIR), options.sysroot)
-    prepend_env_var (env, "GST_VALIDATE_APPS_DIR", os.path.normpath(
+    prepend_env_var(env, "GST_VALIDATE_APPS_DIR", os.path.normpath(
         "%s/subprojects/gst-examples/webrtc/check/validate/apps" %
         SCRIPTDIR), options.sysroot)
 
@@ -383,10 +391,16 @@ def get_subprocess_env(options, gst_version):
                                 os.path.join(options.builddir, root),
                                 options.sysroot)
 
-    with open(os.path.join(options.gstbuilddir, 'GstPluginsPath.json')) as f:
-        for plugin_path in json.load(f):
-            prepend_env_var(env, 'GST_PLUGIN_PATH', plugin_path,
-                            options.sysroot)
+    # Search for the Plugin paths file either in the build directory root
+    # or check if gstreamer is a subproject of another project
+    for sub_directories in [[], ['subprojects', 'gstreamer']]:
+        plugin_paths = os.path.join(options.builddir, *sub_directories, 'GstPluginsPath.json')
+        if os.path.exists(plugin_paths):
+            with open(plugin_paths) as f:
+                for plugin_path in json.load(f):
+                    prepend_env_var(env, 'GST_PLUGIN_PATH', plugin_path,
+                                    options.sysroot)
+            break
 
     # Sort to iterate in a consistent order (`set`s and `hash`es are randomized)
     for p in sorted(paths):
@@ -404,7 +418,6 @@ def get_subprocess_env(options, gst_version):
         installed_s = subprocess.check_output(meson + ['introspect', options.builddir, '--installed'])
         for path, installpath in json.loads(installed_s.decode()).items():
             installpath_parts = pathlib.Path(installpath).parts
-            path_parts = pathlib.Path(path).parts
 
             # We want to add all python modules to the PYTHONPATH
             # in a manner consistent with the way they would be imported:
@@ -417,13 +430,18 @@ def get_subprocess_env(options, gst_version):
             # /usr/lib/site-packages/foo/bar.py , we will not add anything
             # to PYTHONPATH, but the current approach works with pygobject
             # and gst-python at least.
+            py_package = None
             if 'site-packages' in installpath_parts:
-                install_subpath = os.path.join(*installpath_parts[installpath_parts.index('site-packages') + 1:])
+                py_package = 'site-packages'
+            elif 'dist-packages' in installpath_parts:
+                py_package = 'dist-packages'
+            if  py_package:
+                install_subpath = os.path.join(*installpath_parts[installpath_parts.index(py_package) + 1:])
                 if path.endswith(install_subpath):
                     if os.path.commonprefix(["gi/overrides", install_subpath]):
                         overrides_dirs.add(os.path.dirname(path))
                     else:
-                        python_dirs.add(path[:len (install_subpath) * -1])
+                        python_dirs.add(path[:len(install_subpath) * -1])
 
             if path.endswith('.prs'):
                 presets.add(os.path.dirname(path))
@@ -466,11 +484,11 @@ def get_subprocess_env(options, gst_version):
         # Preserve default paths when empty
         prepend_env_var(env, 'XDG_DATA_DIRS', '/usr/local/share/:/usr/share/', '')
 
-    prepend_env_var (env, 'XDG_DATA_DIRS', os.path.join(options.builddir,
-                                                        'subprojects',
-                                                        'gst-docs',
-                                                        'GStreamer-doc'),
-                     options.sysroot)
+    prepend_env_var(env, 'XDG_DATA_DIRS', os.path.join(options.builddir,
+                                                       'subprojects',
+                                                       'gst-docs',
+                                                       'GStreamer-doc'),
+                    options.sysroot)
 
     if 'XDG_CONFIG_DIRS' not in env or not env['XDG_CONFIG_DIRS']:
         # Preserve default paths when empty
@@ -481,11 +499,13 @@ def get_subprocess_env(options, gst_version):
 
     return env
 
+
 def get_windows_shell():
-    command = ['powershell.exe' ,'-noprofile', '-executionpolicy', 'bypass', '-file',
+    command = ['powershell.exe', '-noprofile', '-executionpolicy', 'bypass', '-file',
         os.path.join(SCRIPTDIR, 'data', 'misc', 'cmd_or_ps.ps1')]
     result = subprocess.check_output(command)
     return result.decode().strip()
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(prog="gst-env")
@@ -493,9 +513,6 @@ if __name__ == "__main__":
     parser.add_argument("--builddir",
                         default=DEFAULT_BUILDDIR,
                         help="The meson build directory")
-    parser.add_argument("--gstbuilddir",
-                        default=None,
-                        help="The meson GStreamer build directory (defaults to builddir)")
     parser.add_argument("--srcdir",
                         default=SCRIPTDIR,
                         help="The top level source directory")
@@ -518,16 +535,7 @@ if __name__ == "__main__":
         print("GStreamer not built in %s\n\nBuild it and try again" %
               options.builddir)
         exit(1)
-
-    if options.gstbuilddir and not os.path.exists(options.gstbuilddir):
-        print("GStreamer is not built in %s\n\nBuild it and try again" %
-              options.gstbuilddir)
-        exit(1)
-    elif not options.gstbuilddir:
-        options.gstbuilddir = options.builddir
-
     options.builddir = os.path.abspath(options.builddir)
-    options.gstbuilddir = os.path.abspath(options.gstbuilddir)
 
     if not os.path.exists(options.srcdir):
         print("The specified source dir does not exist" %
@@ -536,27 +544,34 @@ if __name__ == "__main__":
 
     # The following incantation will retrieve the current branch name.
     try:
-      gst_version = git("rev-parse", "--symbolic-full-name", "--abbrev-ref", "HEAD",
-                        repository_path=options.srcdir).strip('\n')
+        gst_version = git("rev-parse", "--symbolic-full-name", "--abbrev-ref", "HEAD",
+                          repository_path=options.srcdir).strip('\n')
     except subprocess.CalledProcessError:
-      gst_version = "unknown"
+        gst_version = "unknown"
 
     if options.wine:
         gst_version += '-' + os.path.basename(options.wine)
 
     env = get_subprocess_env(options, gst_version)
-    if not args:
-        if os.name == 'nt':
-            shell = get_windows_shell()
-            if shell == 'powershell.exe':
-                args = ['powershell.exe']
-                args += ['-NoLogo', '-NoExit']
-                prompt = 'function global:prompt {  "[gst-' + gst_version + '"+"] PS " + $PWD + "> "}'
-                args += ['-Command', prompt]
+    if os.name == 'nt':
+        shell = get_windows_shell()
+        if shell in ['powershell.exe', 'pwsh.exe']:
+            new_args = [shell, '-NoLogo']
+            if not args:
+                prompt = 'function global:prompt {  "[' + gst_version + '"+"] PS " + $PWD + "> "}'
+                new_args += ['-NoExit', '-Command', prompt]
             else:
-                args = [os.environ.get("COMSPEC", r"C:\WINDOWS\system32\cmd.exe")]
-                args += ['/k', 'prompt [gst-{}] $P$G'.format(gst_version)]
+                new_args += ['-NonInteractive', '-Command'] + args
+            args = new_args
         else:
+            new_args = [os.environ.get("COMSPEC", r"C:\WINDOWS\system32\cmd.exe")]
+            if not args:
+                new_args += ['/k', 'prompt [{}] $P$G'.format(gst_version)]
+            else:
+                new_args += ['/c', 'start', '/b', '/wait'] + args
+            args = new_args
+    if not args:
+        if os.name != 'nt':
             args = [os.environ.get("SHELL", os.path.realpath("/bin/sh"))]
         if args[0].endswith('bash') and not str_to_bool(os.environ.get("GST_BUILD_DISABLE_PS1_OVERRIDE", r"FALSE")):
             # Let the GC remove the tmp file
@@ -565,13 +580,13 @@ if __name__ == "__main__":
             if os.path.exists(bashrc):
                 with open(bashrc, 'r') as src:
                     shutil.copyfileobj(src, tmprc)
-            tmprc.write('\nexport PS1="[gst-%s] $PS1"' % gst_version)
+            tmprc.write('\nexport PS1="[%s] $PS1"' % gst_version)
             tmprc.flush()
             if is_bash_completion_available(options):
                 bash_completions_files = []
                 for p in BASH_COMPLETION_PATHS:
                     if os.path.exists(p):
-                        bash_completions_files +=  os.listdir(path=p)
+                        bash_completions_files += os.listdir(path=p)
                 bc_rc = BC_RC.format(bash_completions=' '.join(bash_completions_files), bash_completions_paths=' '.join(BASH_COMPLETION_PATHS))
                 tmprc.write(bc_rc)
                 tmprc.flush()
@@ -586,7 +601,7 @@ if __name__ == "__main__":
             args.append('--init-command')
             prompt_cmd = '''functions --copy fish_prompt original_fish_prompt
             function fish_prompt
-                echo -n '[gst-{}] '(original_fish_prompt)
+                echo -n '[{}] '(original_fish_prompt)
             end'''.format(gst_version)
             args.append(prompt_cmd)
         elif args[0].endswith('zsh'):
@@ -597,7 +612,7 @@ if __name__ == "__main__":
             if os.path.exists(zshrc):
                 with open(zshrc, 'r') as src:
                     shutil.copyfileobj(src, tmprc)
-            tmprc.write('\nexport PROMPT="[gst-{}] $PROMPT"'.format(gst_version))
+            tmprc.write('\nexport PROMPT="[{}] $PROMPT"'.format(gst_version))
             tmprc.flush()
             env['ZDOTDIR'] = tmpdir.name
     try:

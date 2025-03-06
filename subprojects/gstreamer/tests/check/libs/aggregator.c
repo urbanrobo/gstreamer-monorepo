@@ -26,6 +26,7 @@
 
 #include <stdlib.h>
 #include <gst/check/gstcheck.h>
+#include <gst/check/gstharness.h>
 #include <gst/base/gstaggregator.h>
 
 /* dummy aggregator based element */
@@ -143,10 +144,12 @@ gst_test_aggregator_aggregate (GstAggregator * aggregator, gboolean timeout)
   }
   gst_iterator_free (iter);
 
-  if (all_eos == TRUE) {
-    GST_INFO_OBJECT (testagg, "no data available, must be EOS");
-    gst_pad_push_event (aggregator->srcpad, gst_event_new_eos ());
-    return GST_FLOW_EOS;
+  if (!gst_aggregator_get_force_live (aggregator)) {
+    if (all_eos == TRUE) {
+      GST_INFO_OBJECT (testagg, "no data available, must be EOS");
+      gst_pad_push_event (aggregator->srcpad, gst_event_new_eos ());
+      return GST_FLOW_EOS;
+    }
   }
 
   buf = gst_buffer_new ();
@@ -162,6 +165,24 @@ gst_test_aggregator_aggregate (GstAggregator * aggregator, gboolean timeout)
 
 #define gst_test_aggregator_parent_class parent_class
 G_DEFINE_TYPE (GstTestAggregator, gst_test_aggregator, GST_TYPE_AGGREGATOR);
+
+static gboolean gst_aggregator_test_slow_down_sink_query = FALSE;
+
+static gboolean
+gst_aggregator_test_slow_sink_query (GstAggregator * self,
+    GstAggregatorPad * aggpad, GstQuery * query)
+{
+  GST_DEBUG ("Handling query %" GST_PTR_FORMAT, query);
+  if (GST_QUERY_IS_SERIALIZED (query)) {
+    GstStructure *s = gst_query_writable_structure (query);
+
+    if (gst_aggregator_test_slow_down_sink_query)
+      g_usleep (G_TIME_SPAN_MILLISECOND * 10);
+    gst_structure_set (s, "some-int", G_TYPE_INT, 123, NULL);
+    GST_DEBUG ("Written to the query %" GST_PTR_FORMAT, query);
+  }
+  return GST_AGGREGATOR_CLASS (parent_class)->sink_query (self, aggpad, query);
+}
 
 static void
 gst_test_aggregator_class_init (GstTestAggregatorClass * klass)
@@ -188,6 +209,9 @@ gst_test_aggregator_class_init (GstTestAggregatorClass * klass)
 
   base_aggregator_class->aggregate =
       GST_DEBUG_FUNCPTR (gst_test_aggregator_aggregate);
+
+  base_aggregator_class->get_next_time = gst_aggregator_simple_get_next_time;
+  base_aggregator_class->sink_query = gst_aggregator_test_slow_sink_query;
 }
 
 static void
@@ -641,6 +665,60 @@ GST_START_TEST (test_aggregate_handle_queries)
 
 GST_END_TEST;
 
+GST_START_TEST (test_aggregate_queries_robustness)
+{
+  GThread *thread1;
+  ChainData data1 = { 0, };
+  TestData test = { 0, };
+  GstCaps *caps;
+  gint64 start_time;
+
+  gst_aggregator_test_slow_down_sink_query = TRUE;
+
+  _test_data_init (&test, FALSE);
+
+  caps = gst_caps_new_empty_simple ("foo/x-bar");
+  _chain_data_init (&data1, test.aggregator,
+      gst_query_new_allocation (caps, FALSE),
+      gst_query_new_allocation (caps, FALSE),
+      gst_query_new_allocation (caps, FALSE),
+      gst_query_new_allocation (caps, FALSE),
+      gst_query_new_allocation (caps, FALSE),
+      gst_query_new_allocation (caps, FALSE),
+      gst_query_new_allocation (caps, FALSE),
+      gst_query_new_allocation (caps, FALSE),
+      gst_query_new_allocation (caps, FALSE),
+      gst_query_new_allocation (caps, FALSE),
+      gst_query_new_allocation (caps, FALSE),
+      gst_query_new_allocation (caps, FALSE),
+      gst_query_new_allocation (caps, FALSE),
+      gst_query_new_allocation (caps, FALSE),
+      gst_query_new_allocation (caps, FALSE),
+      gst_query_new_allocation (caps, FALSE),
+      gst_query_new_allocation (caps, FALSE), NULL);
+  gst_caps_unref (caps);
+
+  thread1 = g_thread_try_new ("gst-check", push_data, &data1, NULL);
+  g_usleep (G_TIME_SPAN_MILLISECOND * 5);
+  for (start_time = g_get_monotonic_time ();
+      start_time + G_TIME_SPAN_SECOND > g_get_monotonic_time ();
+      g_usleep (G_TIME_SPAN_MILLISECOND)) {
+    fail_unless (gst_element_send_event (test.aggregator,
+            gst_event_new_flush_start ()));
+    fail_unless (gst_element_send_event (test.aggregator,
+            gst_event_new_flush_stop (TRUE)));
+  }
+
+  g_thread_join (thread1);
+
+  _chain_data_clear (&data1);
+  _test_data_clear (&test);
+
+  gst_aggregator_test_slow_down_sink_query = FALSE;
+}
+
+GST_END_TEST;
+
 #define NUM_BUFFERS 3
 static void
 handoff (GstElement * fakesink, GstBuffer * buf, GstPad * pad, guint * count)
@@ -846,8 +924,8 @@ GST_START_TEST (test_flushing_seek)
   GST_BUFFER_TIMESTAMP (buf) = 0;
   _chain_data_init (&data2, test.aggregator, buf, NULL);
 
-  gst_segment_init (&GST_AGGREGATOR_PAD (GST_AGGREGATOR (test.
-              aggregator)->srcpad)->segment, GST_FORMAT_TIME);
+  gst_segment_init (&GST_AGGREGATOR_PAD (GST_AGGREGATOR (test.aggregator)->
+          srcpad)->segment, GST_FORMAT_TIME);
 
   /* now do a successful flushing seek */
   event = gst_event_new_seek (1, GST_FORMAT_TIME, GST_SEEK_FLAG_FLUSH,
@@ -1353,6 +1431,29 @@ GST_START_TEST (test_remove_pad_on_aggregate)
 
 GST_END_TEST;
 
+GST_START_TEST (test_force_live)
+{
+  GstElement *agg;
+  GstHarness *h;
+  GstBuffer *buf;
+
+  agg = gst_check_setup_element ("testaggregator");
+  g_object_set (agg, "latency", GST_USECOND, NULL);
+  gst_aggregator_set_force_live (GST_AGGREGATOR (agg), TRUE);
+  h = gst_harness_new_with_element (agg, NULL, "src");
+
+  gst_harness_play (h);
+
+  gst_harness_crank_single_clock_wait (h);
+  buf = gst_harness_pull (h);
+
+  gst_buffer_unref (buf);
+  gst_harness_teardown (h);
+  gst_object_unref (agg);
+}
+
+GST_END_TEST;
+
 static Suite *
 gst_aggregator_suite (void)
 {
@@ -1370,6 +1471,7 @@ gst_aggregator_suite (void)
   tcase_add_test (general, test_aggregate_gap);
   tcase_add_test (general, test_aggregate_handle_events);
   tcase_add_test (general, test_aggregate_handle_queries);
+  tcase_add_test (general, test_aggregate_queries_robustness);
   tcase_add_test (general, test_flushing_seek);
   tcase_add_test (general, test_infinite_seek);
   tcase_add_test (general, test_infinite_seek_50_src);
@@ -1382,6 +1484,7 @@ gst_aggregator_suite (void)
   tcase_add_test (general, test_change_state_intensive);
   tcase_add_test (general, test_flush_on_aggregate);
   tcase_add_test (general, test_remove_pad_on_aggregate);
+  tcase_add_test (general, test_force_live);
 
   return suite;
 }

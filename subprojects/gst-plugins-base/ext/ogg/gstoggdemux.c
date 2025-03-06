@@ -40,7 +40,7 @@
 #endif
 
 #include <string.h>
-#include <gst/gst-i18n-plugin.h>
+#include <glib/gi18n-lib.h>
 #include <gst/tag/tag.h>
 #include <gst/audio/audio.h>
 
@@ -580,6 +580,9 @@ gst_ogg_demux_chain_peer (GstOggPad * pad, ogg_packet * packet,
     if ((packet->bytes >= 7 && memcmp (packet->packet, "OVP80\2 ", 7) == 0) ||
         packet->b_o_s ||
         (packet->bytes >= 5 && memcmp (packet->packet, "OVP80", 5) == 0)) {
+      /* Request the first packet being pushed downstream to have the header
+         flag set, unblocking the keyframe_waiter_probe in decodebin3. */
+      pad->need_header_flag = TRUE;
       /* We don't push header packets for VP8 */
       goto done;
     }
@@ -818,9 +821,11 @@ gst_ogg_demux_chain_peer (GstOggPad * pad, ogg_packet * packet,
   if (delta_unit)
     GST_BUFFER_FLAG_SET (buf, GST_BUFFER_FLAG_DELTA_UNIT);
 
-  /* set header flag for buffers that are also in the streamheaders */
-  if (is_header)
+  /* set header flag for buffers that are also in the streamheaders or when explicitely requested (VP8). */
+  if (is_header || pad->need_header_flag) {
+    pad->need_header_flag = FALSE;
     GST_BUFFER_FLAG_SET (buf, GST_BUFFER_FLAG_HEADER);
+  }
 
   if (packet->packet != NULL) {
     /* copy packet in buffer */
@@ -2524,6 +2529,7 @@ gst_ogg_demux_sink_event (GstPad * pad, GstObject * parent, GstEvent * event)
           GST_DEBUG_OBJECT (ogg, "Error seeking back after duration check: %d",
               res);
         }
+        gst_event_unref (event);
         res = TRUE;
         break;
       } else {
@@ -2538,6 +2544,8 @@ gst_ogg_demux_sink_event (GstPad * pad, GstObject * parent, GstEvent * event)
       }
       if (!drop)
         res = gst_ogg_demux_send_event (ogg, event);
+      else
+        gst_event_unref (event);
       if (ogg->current_chain == NULL) {
         GST_WARNING_OBJECT (ogg,
             "EOS while trying to retrieve chain, seeking disabled");
@@ -5262,6 +5270,7 @@ gst_ogg_demux_change_state (GstElement * element, GstStateChange transition)
       gst_ogg_demux_clear_chains (ogg);
       GST_OBJECT_LOCK (ogg);
       ogg->running = FALSE;
+      gst_event_replace (&ogg->seek_event, NULL);
       GST_OBJECT_UNLOCK (ogg);
       break;
     case GST_STATE_CHANGE_READY_TO_NULL:

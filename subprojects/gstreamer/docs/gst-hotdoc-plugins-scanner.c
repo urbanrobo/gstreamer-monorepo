@@ -8,7 +8,7 @@
 #include <glib/gprintf.h>
 #include <gst/gst.h>
 #include <gio/gio.h>
-#include "gst/gst-i18n-app.h"
+#include <glib/gi18n.h>
 
 static GRegex *cleanup_caps_field = NULL;
 static void _add_object_details (GString * json, GString * other_types,
@@ -406,8 +406,15 @@ _add_properties (GString * json, GString * other_types,
       } else if (G_IS_PARAM_SPEC_FLAGS (spec)) {
         _serialize_flags (other_types, spec->value_type);
       } else if (G_IS_PARAM_SPEC_OBJECT (spec)) {
+        GType inst_type = spec->value_type;
+        GObject *obj = g_value_get_object (&value);
+
+        if (obj) {
+          inst_type = G_OBJECT_TYPE (obj);
+        }
+
         _serialize_object (other_types, seen_other_types, spec->value_type,
-            spec->value_type);
+            inst_type);
       }
     }
 
@@ -752,6 +759,10 @@ _add_factory_details (GString * json, GstElementFactory * factory)
       gchar *val;
       gchar *key = *k;
 
+      /* "long-name" can be varying depending on environment, skip this */
+      if (g_strcmp0 (key, "long-name") == 0)
+        continue;
+
       val = json_strescape (gst_element_factory_get_metadata (factory, key));
       g_string_append_printf (json, "%s\"%s\": \"%s\"", f ? "" : ",", key, val);
       f = FALSE;
@@ -823,7 +834,8 @@ _add_element_details (GString * json, GString * other_types,
       gst_element_factory_create (GST_ELEMENT_FACTORY (feature), NULL);
   char s[20];
 
-  g_assert (element);
+  if (!element)
+    g_error ("Couldn't not make `%s`", GST_OBJECT_NAME (feature));
 
   g_string_append_printf (json,
       "\"%s\": {"

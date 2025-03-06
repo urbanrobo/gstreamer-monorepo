@@ -149,6 +149,9 @@ GST_VIDEO_API
 gboolean       gst_video_guess_framerate (GstClockTime duration,
                                           gint * dest_n, gint * dest_d);
 
+GST_VIDEO_API
+gboolean       gst_video_is_common_aspect_ratio (gint width, gint height, gint par_n, gint par_d);
+
 /* convert/encode video sample from one format to another */
 
 typedef void (*GstVideoConvertSampleCallback) (GstSample * sample, GError *error, gpointer user_data);
@@ -196,5 +199,6 @@ G_END_DECLS
 #include <gst/video/videoorientation.h>
 #include <gst/video/video-overlay-composition.h>
 #include <gst/video/videooverlay.h>
+#include <gst/video/video-sei.h>
 
 #endif /* __GST_VIDEO_H__ */

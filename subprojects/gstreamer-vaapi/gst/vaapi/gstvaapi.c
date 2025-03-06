@@ -29,14 +29,14 @@
 #include "gstvaapisink.h"
 #include "gstvaapidecodebin.h"
 
-#if USE_ENCODERS
+#if GST_VAAPI_USE_ENCODERS
 #include "gstvaapiencode_h264.h"
 #include "gstvaapiencode_mpeg2.h"
 #include "gstvaapiencode_jpeg.h"
 #include "gstvaapiencode_vp8.h"
 #include "gstvaapiencode_h265.h"
 
-#if USE_VP9_ENCODER
+#if GST_VAAPI_USE_VP9_ENCODER
 #include "gstvaapiencode_vp9.h"
 #endif
 #endif
@@ -109,7 +109,7 @@ display_get_decoder_codecs (GstVaapiDisplay * display)
   return codecs;
 }
 
-#if USE_ENCODERS
+#if GST_VAAPI_USE_ENCODERS
 static GArray *
 display_get_encoder_codecs (GstVaapiDisplay * display)
 {
@@ -144,7 +144,7 @@ static const GstVaapiEncoderMap vaapi_encode_map[] = {
   DEF_ENC (MPEG2, mpeg2),
   DEF_ENC (JPEG, jpeg),
   DEF_ENC (VP8, vp8),
-#if USE_VP9_ENCODER
+#if GST_VAAPI_USE_VP9_ENCODER
   DEF_ENC (VP9, vp9),
 #endif
   DEF_ENC (H265, h265),
@@ -200,24 +200,24 @@ plugin_init (GstPlugin * plugin)
   decoders = display_get_decoder_codecs (display);
   if (decoders) {
     gst_vaapidecode_register (plugin, decoders);
+    gst_element_register (plugin, "vaapidecodebin",
+        GST_RANK_PRIMARY + 2, GST_TYPE_VAAPI_DECODE_BIN);
     g_array_unref (decoders);
   }
 
-  if (_gst_vaapi_has_video_processing)
+  if (_gst_vaapi_has_video_processing) {
     gst_vaapioverlay_register (plugin, display);
 
-  gst_element_register (plugin, "vaapipostproc",
-      GST_RANK_NONE, GST_TYPE_VAAPIPOSTPROC);
-
-  gst_element_register (plugin, "vaapidecodebin",
-      GST_RANK_PRIMARY + 2, GST_TYPE_VAAPI_DECODE_BIN);
+    gst_element_register (plugin, "vaapipostproc",
+        GST_RANK_NONE, GST_TYPE_VAAPIPOSTPROC);
+  }
 
   rank = GST_RANK_SECONDARY;
   if (g_getenv ("WAYLAND_DISPLAY"))
     rank = GST_RANK_MARGINAL;
   gst_element_register (plugin, "vaapisink", rank, GST_TYPE_VAAPISINK);
 
-#if USE_ENCODERS
+#if GST_VAAPI_USE_ENCODERS
   gst_vaapiencode_register (plugin, display);
 #endif
 

@@ -31,7 +31,8 @@ enum
 {
   BUFFER_FLAG_SYNC_FRAME = 1,
   BUFFER_FLAG_CODEC_CONFIG = 2,
-  BUFFER_FLAG_END_OF_STREAM = 4
+  BUFFER_FLAG_END_OF_STREAM = 4,
+  BUFFER_FLAG_PARTIAL_FRAME = 8,
 };
 
 enum
@@ -148,7 +149,8 @@ enum
   HEVCHighTierLevel6  = 0x200000,
   HEVCMainTierLevel61 = 0x400000,
   HEVCHighTierLevel61 = 0x800000,
-  HEVCMainTierLevel62 = 0x1000000
+  HEVCMainTierLevel62 = 0x1000000,
+  HEVCHighTierLevel62 = 0x2000000
 };
 
 enum

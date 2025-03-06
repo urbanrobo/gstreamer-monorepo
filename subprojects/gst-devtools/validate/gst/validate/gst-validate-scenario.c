@@ -1,8 +1,10 @@
 /* GStreamer
+
  *
  * Copyright (C) 2013 Collabora Ltd.
  *  Author: Thibault Saunier <thibault.saunier@collabora.com>
- * Copyright (C) 2018-2020 Igalia S.L
+ * Copyright (C) 2018-2022 Igalia S.L
+ *  Author: Thibault Saunier <tsaunier@igalia.com>
 
  *
  * gst-validate-scenario.c - Validate Scenario class
@@ -150,6 +152,9 @@ _fill_action (GstValidateScenario * scenario, GstValidateAction * action,
 static gboolean _action_set_done (GstValidateAction * action);
 static GList *_find_elements_defined_in_action (GstValidateScenario * scenario,
     GstValidateAction * action);
+static GstValidateAction *gst_validate_create_subaction (GstValidateScenario *
+    scenario, GstStructure * lvariables, GstValidateAction * action,
+    GstStructure * nstruct, gint it, gint max);
 
 /* GstValidateSinkInformation tracks information for all sinks in the pipeline */
 typedef struct
@@ -252,6 +257,7 @@ struct _GstValidateScenarioPrivate
   gboolean changing_state;
   gboolean needs_async_done;
   gboolean ignore_eos;
+  gboolean allow_errors;
   GstState target_state;
 
   GList *overrides;
@@ -318,7 +324,7 @@ gst_validate_scenario_intercept_report (GstValidateReporter * reporter,
  * gst_validate_scenario_get_pipeline:
  * @scenario: The scenario to retrieve a pipeline from
  *
- * Returns: (transfer full): The #GstPipeline the scenario is running
+ * Returns: (transfer full) (nullable): The #GstPipeline the scenario is running
  * against
  */
 GstElement *
@@ -342,9 +348,12 @@ _reporter_iface_init (GstValidateReporterInterface * iface)
   iface->get_pipeline = _get_pipeline;
 }
 
+static GQuark chain_qdata;
 G_DEFINE_TYPE_WITH_CODE (GstValidateScenario, gst_validate_scenario,
     GST_TYPE_OBJECT, G_ADD_PRIVATE (GstValidateScenario)
-    G_IMPLEMENT_INTERFACE (GST_TYPE_VALIDATE_REPORTER, _reporter_iface_init));
+    G_IMPLEMENT_INTERFACE (GST_TYPE_VALIDATE_REPORTER, _reporter_iface_init)
+    chain_qdata = g_quark_from_static_string ("__validate_scenario_chain_data")
+    );
 
 /* GstValidateAction implementation */
 static GType _gst_validate_action_type = 0;
@@ -367,6 +376,8 @@ struct _GstValidateActionPrivate
   gboolean pending_set_done;
 
   GMainContext *context;
+
+  GValue it_value;
 };
 
 static JsonNode *
@@ -440,6 +451,11 @@ _action_copy (GstValidateAction * act)
   GST_VALIDATE_ACTION_N_REPEATS (copy) = GST_VALIDATE_ACTION_N_REPEATS (act);
   GST_VALIDATE_ACTION_RANGE_NAME (copy) = GST_VALIDATE_ACTION_RANGE_NAME (act);
 
+  if (act->priv->it_value.g_type != 0) {
+    g_value_init (&copy->priv->it_value, G_VALUE_TYPE (&act->priv->it_value));
+    g_value_copy (&act->priv->it_value, &copy->priv->it_value);
+  }
+
   return copy;
 }
 
@@ -477,6 +493,8 @@ _action_free (GstValidateAction * action)
   if (action->priv->main_structure)
     gst_structure_free (action->priv->main_structure);
 
+  if (action->priv->it_value.g_type != 0)
+    g_value_reset (&action->priv->it_value);
   g_weak_ref_clear (&action->priv->scenario);
   g_free (GST_VALIDATE_ACTION_FILENAME (action));
   g_free (GST_VALIDATE_ACTION_DEBUG (action));
@@ -678,7 +696,7 @@ _update_well_known_vars (GstValidateScenario * scenario)
     gst_structure_set (scenario->priv->vars, "position", G_TYPE_DOUBLE,
         dposition, NULL);
   } else {
-    GST_WARNING_OBJECT (scenario, "Could not query position");
+    GST_INFO_OBJECT (scenario, "Could not query position");
   }
 }
 
@@ -2169,11 +2187,15 @@ _add_execute_actions_gsource (GstValidateScenario * scenario)
       && priv->signal_handler_id == 0 && priv->wait_message_action == NULL) {
     if (!scenario->priv->action_execution_interval)
       priv->execute_actions_source_id =
-          g_idle_add ((GSourceFunc) execute_next_action, scenario);
+          g_idle_add_full (G_PRIORITY_DEFAULT_IDLE,
+          (GSourceFunc) execute_next_action,
+          gst_object_ref (GST_OBJECT_CAST (scenario)), gst_object_unref);
     else
       priv->execute_actions_source_id =
-          g_timeout_add (scenario->priv->action_execution_interval,
-          (GSourceFunc) execute_next_action, scenario);
+          g_timeout_add_full (G_PRIORITY_DEFAULT,
+          scenario->priv->action_execution_interval,
+          (GSourceFunc) execute_next_action,
+          gst_object_ref (GST_OBJECT_CAST (scenario)), gst_object_unref);
     SCENARIO_UNLOCK (scenario);
 
     GST_DEBUG_OBJECT (scenario, "Start checking position again");
@@ -2457,6 +2479,13 @@ _foreach_find_iterator (GQuark field_id, GValue * value,
 }
 
 
+/**
+ * gst_validate_execute_action:
+ * @action_type: The #GstValidateActionType to execute
+ * @action: (transfer full): The #GstValidateAction to execute
+ *
+ * Executes @action
+ */
 GstValidateExecuteActionReturn
 gst_validate_execute_action (GstValidateActionType * action_type,
     GstValidateAction * action)
@@ -2666,6 +2695,15 @@ execute_next_action_full (GstValidateScenario * scenario, GstMessage * message)
     return G_SOURCE_CONTINUE;
   }
 
+  if (message && GST_MESSAGE_TYPE (message) == GST_MESSAGE_EOS
+      && act->playback_time != GST_CLOCK_TIME_NONE) {
+    GST_VALIDATE_REPORT_ACTION (scenario, act,
+        SCENARIO_ACTION_ENDED_EARLY,
+        "Got EOS before action playback time %" GST_TIME_FORMAT,
+        GST_TIME_ARGS (act->playback_time));
+    goto execute_action;
+  }
+
   switch (act->priv->state) {
     case GST_VALIDATE_EXECUTE_ACTION_NONE:
     case GST_VALIDATE_EXECUTE_ACTION_NON_BLOCKING:
@@ -2712,6 +2750,7 @@ execute_next_action_full (GstValidateScenario * scenario, GstMessage * message)
     return G_SOURCE_CONTINUE;
   }
 
+execute_action:
   type = _find_action_type (act->type);
 
   GST_DEBUG_OBJECT (scenario, "Executing %" GST_PTR_FORMAT
@@ -2777,6 +2816,7 @@ stop_waiting_signal (GstStructure * data)
 {
   guint sigid = 0;
   GstElement *target;
+  GstStructure *check = NULL;
   GstValidateAction *action;
   GstValidateScenario *scenario;
 
@@ -2794,6 +2834,21 @@ stop_waiting_signal (GstStructure * data)
   if (!sigid)
     scenario->priv->signal_handler_id = 0;
   SCENARIO_UNLOCK (scenario);
+
+  if (gst_structure_get (action->structure, "check", GST_TYPE_STRUCTURE,
+          &check, NULL)) {
+    GstValidateAction *subact =
+        gst_validate_create_subaction (scenario, NULL, action,
+        check, 0, 0);
+    GstValidateActionType *subact_type = _find_action_type (subact->type);
+    if (!(subact_type->flags & GST_VALIDATE_ACTION_TYPE_CHECK)) {
+      gst_validate_error_structure (action,
+          "`check` action %s is not marked as 'check'", subact->type);
+    }
+
+    gst_validate_execute_action (subact_type, subact);
+    gst_validate_action_unref (subact);
+  }
 
   gst_validate_action_set_done (action);
   gst_validate_action_unref (action);
@@ -3178,7 +3233,7 @@ set_env_var (GQuark field_id, GValue * value,
 static GstValidateExecuteActionReturn
 _run_command (GstValidateScenario * scenario, GstValidateAction * action)
 {
-  gchar **argv = NULL, *_stderr;
+  gchar **argv = NULL, *_stderr = NULL;
   GError *error = NULL;
   const GValue *env = NULL;
   GSubprocess *subproc = NULL;
@@ -3216,6 +3271,8 @@ _run_command (GstValidateScenario * scenario, GstValidateAction * action)
   REPORT_UNLESS (g_subprocess_get_exit_status (subproc) == 0,
       done, "Sub command failed. Stderr: %s", _stderr);
 
+  g_free (_stderr);
+
   res = GST_VALIDATE_EXECUTE_ACTION_OK;
 
 done:
@@ -3225,6 +3282,67 @@ done:
   g_clear_object (&subproc);
 
   return res;
+}
+
+static GstValidateExecuteActionReturn
+_execute_check_pad_caps (GstValidateScenario * scenario,
+    GstValidateAction * action)
+{
+  GstValidateExecuteActionReturn res = GST_VALIDATE_EXECUTE_ACTION_OK;
+  GList *elements = NULL;
+  GstPad *pad = NULL;
+  GstStructure *expected_struct = NULL;
+  GstCaps *expected = NULL, *current_caps = NULL;
+  const gchar *pad_name, *comparison_type =
+      gst_structure_get_string (action->structure, "comparision-mode");
+
+  DECLARE_AND_GET_PIPELINE (scenario, action);
+
+  REPORT_UNLESS (elements =
+      _find_elements_defined_in_action (scenario, action), done,
+      "Could not find any element from %" GST_PTR_FORMAT, action->structure);
+
+  REPORT_UNLESS (g_list_length (elements) == 1, done,
+      "More than one element found from %" GST_PTR_FORMAT, action->structure);
+
+  pad_name = gst_structure_get_string (action->structure, "pad");
+  REPORT_UNLESS (pad =
+      gst_element_get_static_pad (elements->data, pad_name), done,
+      "Could not find pad %s in %" GST_PTR_FORMAT, pad_name, elements->data);
+
+  current_caps = gst_pad_get_current_caps (pad);
+  if (gst_structure_get (action->structure, "expected-caps", GST_TYPE_STRUCTURE,
+          &expected_struct, NULL))
+    expected = gst_caps_new_full (gst_structure_copy (expected_struct), NULL);
+  else
+    gst_structure_get (action->structure, "expected-caps", GST_TYPE_CAPS,
+        &expected, NULL);
+
+  if (!comparison_type || !g_strcmp0 (comparison_type, "intersect")) {
+    REPORT_UNLESS (expected, done, "Can't intersect with NULL expected caps");
+    REPORT_UNLESS (gst_caps_can_intersect (expected, current_caps), done,
+        "Caps can't intesect. Expected: \n - %" GST_PTR_FORMAT "\nGot:\n - %"
+        GST_PTR_FORMAT, expected, current_caps);
+  } else if (!g_strcmp0 (comparison_type, "equal")) {
+    REPORT_UNLESS ((expected == NULL && current_caps == NULL)
+        || gst_caps_is_equal (expected, current_caps), done,
+        "Caps do not match. Expected: %" GST_PTR_FORMAT " got %" GST_PTR_FORMAT,
+        expected, current_caps);
+  } else {
+    REPORT_UNLESS (FALSE, done, "Invalid caps `comparision-type`: '%s'",
+        comparison_type);
+  }
+
+done:
+  g_clear_object (&pipeline);
+  g_clear_object (&pad);
+  g_list_free_full (elements, gst_object_unref);
+  gst_clear_structure (&expected_struct);
+  gst_clear_caps (&current_caps);
+  gst_clear_caps (&expected);
+
+  return res;
+
 }
 
 static GstValidateExecuteActionReturn
@@ -3336,102 +3454,167 @@ _execute_set_debug_threshold (GstValidateScenario * scenario,
   return TRUE;
 }
 
-static gboolean
+static GstValidateExecuteActionReturn
 _execute_emit_signal (GstValidateScenario * scenario,
     GstValidateAction * action)
 {
+  GstValidateExecuteActionReturn res = GST_VALIDATE_EXECUTE_ACTION_OK;
   GstElement *target;
-  const gchar *signal_name;
+  guint n_params = 0;
+  GSignalQuery query = { 0, };
+  GValue *values = NULL, lparams = { 0, };
+  const GValue *params;
 
-  target = _get_target_element (scenario, action);
-  if (target == NULL) {
-    return FALSE;
+  REPORT_UNLESS ((target =
+          _get_target_element (scenario, action)), out, "No element found");
+
+  query.signal_name =
+      gst_structure_get_string (action->structure, "signal-name");
+  query.signal_id = g_signal_lookup (query.signal_name, G_OBJECT_TYPE (target));
+  REPORT_UNLESS (query.signal_id != 0, out, "Invalid signal `%s::%s`",
+      G_OBJECT_TYPE_NAME (target), query.signal_name);
+
+  g_signal_query (query.signal_id, &query);
+
+  params = gst_structure_get_value (action->structure, "params");
+  if (params) {
+    if (G_VALUE_HOLDS_STRING (params)) {
+      g_value_init (&lparams, GST_TYPE_ARRAY);
+
+      REPORT_UNLESS (gst_value_deserialize (&lparams,
+              g_value_get_string (params)), out,
+          "\"params\" argument should be a value array or a string deserializable"
+          " as value array, got string %s", g_value_get_string (params)
+          );
+      params = &lparams;
+    } else {
+      REPORT_UNLESS (GST_VALUE_HOLDS_ARRAY (params), out,
+          "\"params\" argument should be a value array, got %s",
+          G_VALUE_TYPE_NAME (params));
+    }
+    n_params = gst_value_array_get_size (params);
+  }
+  REPORT_UNLESS (query.n_params == (n_params), out,
+      "Expected %d `params` got %d", query.n_params, n_params);
+  values = g_malloc0 ((n_params + 2) * sizeof (GValue));
+  g_value_init (&values[0], G_OBJECT_TYPE (target));
+  g_value_take_object (&values[0], target);
+  for (gint i = 1; i < n_params + 1; i++) {
+    const GValue *param = gst_value_array_get_value (params, i - 1);
+    g_value_init (&values[i], query.param_types[i - 1]);
+
+    if (query.param_types[i - 1] == G_TYPE_BYTES
+        && G_VALUE_TYPE (param) == G_TYPE_STRING) {
+      const gchar *s = g_value_get_string (param);
+      g_value_take_boxed (&values[i], g_bytes_new (s, strlen (s)));
+    } else {
+      REPORT_UNLESS (g_value_transform (param, &values[i]), out,
+          "Could not transform param %d from %s to %s", i - 1,
+          G_VALUE_TYPE_NAME (param), G_VALUE_TYPE_NAME (&values[i]));
+    }
   }
 
-  signal_name = gst_structure_get_string (action->structure, "signal-name");
+  g_signal_emitv (values, query.signal_id, 0, NULL);
 
-  /* Right now we don't support arguments to signals as there weren't any use
-   * cases to cover yet but it should be possible to do so */
-  g_signal_emit_by_name (target, signal_name, NULL);
+  for (gint i = 0; i < n_params + 1; i++)
+    g_value_reset (&values[i]);
 
-  gst_object_unref (target);
-  return TRUE;
+  if (G_VALUE_TYPE (&lparams))
+    g_value_reset (&lparams);
+
+out:
+  return res;
+
 }
 
+typedef struct _ChainWrapperFunctionData ChainWrapperFunctionData;
 typedef GstFlowReturn (*ChainWrapperFunction) (GstPad * pad, GstObject * parent,
-    GstBuffer * buffer, gpointer * user_data, gboolean * remove_wrapper);
+    GstBuffer * buffer, ChainWrapperFunctionData * data);
 
-typedef struct _ChainWrapperFunctionData
+struct _ChainWrapperFunctionData
 {
   GstPadChainFunction wrapped_chain_func;
   gpointer wrapped_chain_data;
   GDestroyNotify wrapped_chain_notify;
   ChainWrapperFunction wrapper_function;
   gpointer wrapper_function_user_data;
-} ChainWrapperFunctionData;
+
+  GMutex actions_lock;
+  GList *actions;
+
+};
+
+static void
+chain_wrapper_function_free (ChainWrapperFunctionData * data)
+{
+  g_list_free_full (data->actions, (GDestroyNotify) gst_validate_action_unref);
+  g_mutex_clear (&data->actions_lock);
+}
 
 static GstFlowReturn
 _pad_chain_wrapper (GstPad * pad, GstObject * parent, GstBuffer * buffer)
 {
-  ChainWrapperFunctionData *data = pad->chaindata;
-  GstFlowReturn ret;
-  gboolean remove_wrapper = FALSE;
+  ChainWrapperFunctionData *data =
+      g_object_get_qdata (G_OBJECT (pad), chain_qdata);
 
-  pad->chainfunc = data->wrapped_chain_func;
-  pad->chaindata = data->wrapped_chain_data;
-  pad->chainnotify = data->wrapped_chain_notify;
-
-  ret = data->wrapper_function (pad, parent, buffer,
-      data->wrapper_function_user_data, &remove_wrapper);
-
-  if (!remove_wrapper) {
-    /* The chain function may have changed during the calling (e.g. if it was
-     * a nested wrapper that decided to remove itself) so we need to update the
-     * wrapped function just in case. */
-    data->wrapped_chain_func = pad->chainfunc;
-    data->wrapped_chain_data = pad->chaindata;
-    data->wrapped_chain_notify = pad->chainnotify;
-
-    /* Restore the wrapper as chain function */
-    pad->chainfunc = _pad_chain_wrapper;
-    pad->chaindata = data;
-    pad->chainnotify = g_free;
-  } else
-    g_free (data);
-
-  return ret;
+  return data->wrapper_function (pad, parent, buffer,
+      g_object_get_qdata (G_OBJECT (pad), chain_qdata));
 }
 
 static void
 wrap_pad_chain_function (GstPad * pad, ChainWrapperFunction new_function,
-    gpointer user_data)
+    GstValidateAction * action)
 {
-  ChainWrapperFunctionData *data = g_new (ChainWrapperFunctionData, 1);
-  data->wrapped_chain_func = pad->chainfunc;
-  data->wrapped_chain_data = pad->chaindata;
-  data->wrapped_chain_notify = pad->chainnotify;
-  data->wrapper_function = new_function;
-  data->wrapper_function_user_data = user_data;
+  ChainWrapperFunctionData *data =
+      g_object_get_qdata (G_OBJECT (pad), chain_qdata);
 
+  if (data) {
+    g_mutex_lock (&data->actions_lock);
+    data->actions = g_list_append (data->actions, action);
+    g_mutex_unlock (&data->actions_lock);
+
+    return;
+  }
+
+  data = g_new0 (ChainWrapperFunctionData, 1);
+  data->actions = g_list_append (data->actions, action);
+
+  g_object_set_qdata_full (G_OBJECT (pad), chain_qdata, data,
+      (GDestroyNotify) chain_wrapper_function_free);
+
+  data->wrapped_chain_func = pad->chainfunc;
+  data->wrapper_function = new_function;
   pad->chainfunc = _pad_chain_wrapper;
-  pad->chaindata = data;
-  pad->chainnotify = g_free;
 }
 
 static GstFlowReturn
-appsrc_push_chain_wrapper (GstPad * pad, GstObject * parent, GstBuffer * buffer,
-    gpointer * user_data, gboolean * remove_wrapper)
+appsrc_push_chain_wrapper (GstPad * pad, GstObject * parent,
+    GstBuffer * buffer, ChainWrapperFunctionData * data)
 {
-  GstValidateAction *action = (GstValidateAction *) user_data;
-  GstValidateScenario *scenario = gst_validate_action_get_scenario (action);
+  GstValidateAction *action;
+  GstValidateScenario *scenario;
   GstFlowReturn ret;
+
+  g_mutex_lock (&data->actions_lock);
+  if (data->actions) {
+    action = data->actions->data;
+    data->actions = g_list_remove (data->actions, action);
+    g_mutex_unlock (&data->actions_lock);
+
+    scenario = gst_validate_action_get_scenario (action);
+  } else {
+    g_mutex_unlock (&data->actions_lock);
+
+    return data->wrapped_chain_func (pad, parent, buffer);
+  }
+
   GST_VALIDATE_SCENARIO_EOS_HANDLING_LOCK (scenario);
-  ret = pad->chainfunc (pad, parent, buffer);
+  ret = data->wrapped_chain_func (pad, parent, buffer);
   gst_validate_action_set_done (action);
   gst_validate_action_unref (action);
-  *remove_wrapper = TRUE;
   GST_VALIDATE_SCENARIO_EOS_HANDLING_UNLOCK (scenario);
   g_object_unref (scenario);
+
   return ret;
 }
 
@@ -3466,7 +3649,7 @@ _execute_appsrc_push (GstValidateScenario * scenario,
   GstBuffer *buffer;
   guint64 offset = 0;
   guint64 size = 0, read;
-  gint push_buffer_ret;
+  gint push_sample_ret;
   gboolean wait;
   GFileInfo *finfo = NULL;
   GFile *f = NULL;
@@ -3474,6 +3657,9 @@ _execute_appsrc_push (GstValidateScenario * scenario,
   GstPad *peer_pad = NULL;
   GInputStream *stream = NULL;
   GstValidateExecuteActionReturn res;
+  GstSegment segment;
+  GstCaps *caps = NULL;
+  GstSample *sample;
 
   /* We will only wait for the the buffer to be pushed if we are in a state
    * that allows flow of buffers (>=PAUSED). Otherwise the buffer will just
@@ -3521,10 +3707,18 @@ _execute_appsrc_push (GstValidateScenario * scenario,
 
   buffer = gst_buffer_new_wrapped (file_contents, size);
   file_contents = NULL;
+  gst_validate_action_get_clocktime (scenario,
+      action, "pts", &GST_BUFFER_PTS (buffer)
+      );
+  gst_validate_action_get_clocktime (scenario,
+      action, "dts", &GST_BUFFER_DTS (buffer)
+      );
+  gst_validate_action_get_clocktime (scenario,
+      action, "duration", &GST_BUFFER_DURATION (buffer)
+      );
 
   {
     const GValue *caps_value;
-    GstCaps *caps = NULL;
     caps_value = gst_structure_get_value (action->structure, "caps");
     if (caps_value) {
       if (G_VALUE_HOLDS_STRING (caps_value)) {
@@ -3536,8 +3730,6 @@ _execute_appsrc_push (GstValidateScenario * scenario,
       }
 
       REPORT_UNLESS (caps, err, "Could not get caps value");
-      g_object_set (target, "caps", caps, NULL);
-      gst_caps_unref (caps);
     }
   }
 
@@ -3552,9 +3744,47 @@ _execute_appsrc_push (GstValidateScenario * scenario,
   /* Keep the action alive until set done is called. */
   gst_validate_action_ref (action);
 
-  g_signal_emit_by_name (target, "push-buffer", buffer, &push_buffer_ret);
+  sample = gst_sample_new (buffer, caps, NULL, NULL);
+  gst_clear_caps (&caps);
   gst_buffer_unref (buffer);
-  REPORT_UNLESS (push_buffer_ret == GST_FLOW_OK, err,
+  if (gst_structure_has_field (action->structure, "segment")) {
+    GstFormat format;
+    GstStructure *segment_struct;
+    GstClockTime tmp;
+
+    REPORT_UNLESS (gst_structure_get (action->structure, "segment",
+            GST_TYPE_STRUCTURE, &segment_struct, NULL), err,
+        "Segment field not in right format (expected GstStructure).");
+
+    if (!gst_structure_get (segment_struct, "format", GST_TYPE_FORMAT, &format,
+            NULL))
+      g_object_get (target, "format", &format, NULL);
+
+    gst_segment_init (&segment, format);
+    if (gst_validate_utils_get_clocktime (segment_struct, "base", &tmp))
+      segment.base = tmp;
+    if (gst_validate_utils_get_clocktime (segment_struct, "offset", &tmp))
+      segment.offset = tmp;
+    if (gst_validate_utils_get_clocktime (segment_struct, "time", &tmp))
+      segment.time = tmp;
+    if (gst_validate_utils_get_clocktime (segment_struct, "position", &tmp))
+      segment.position = tmp;
+    if (gst_validate_utils_get_clocktime (segment_struct, "duration", &tmp))
+      segment.duration = tmp;
+    if (gst_validate_utils_get_clocktime (segment_struct, "start", &tmp))
+      segment.start = tmp;
+    if (gst_validate_utils_get_clocktime (segment_struct, "stop", &tmp))
+      segment.stop = tmp;
+    gst_structure_get_double (segment_struct, "rate", &segment.rate);
+
+    gst_structure_free (segment_struct);
+
+    gst_sample_set_segment (sample, &segment);
+  }
+
+  g_signal_emit_by_name (target, "push-sample", sample, &push_sample_ret);
+  gst_sample_unref (sample);
+  REPORT_UNLESS (push_sample_ret == GST_FLOW_OK, err,
       "push-buffer signal failed in action.");
 
   if (wait) {
@@ -3742,11 +3972,17 @@ gst_validate_action_default_prepare_func (GstValidateAction * action)
   if (!gst_validate_action_setup_repeat (scenario, action))
     goto err;
 
-  if (GST_VALIDATE_ACTION_N_REPEATS (action))
-    gst_structure_set (scenario->priv->vars,
-        GST_VALIDATE_ACTION_RANGE_NAME (action) ?
-        GST_VALIDATE_ACTION_RANGE_NAME (action) : "repeat", G_TYPE_INT,
-        action->repeat, NULL);
+  if (GST_VALIDATE_ACTION_N_REPEATS (action)) {
+    if (action->priv->it_value.g_type != 0) {
+      gst_structure_set_value (scenario->priv->vars,
+          GST_VALIDATE_ACTION_RANGE_NAME (action), &action->priv->it_value);
+    } else {
+      gst_structure_set (scenario->priv->vars,
+          GST_VALIDATE_ACTION_RANGE_NAME (action) ?
+          GST_VALIDATE_ACTION_RANGE_NAME (action) : "repeat", G_TYPE_INT,
+          action->repeat, NULL);
+    }
+  }
   gst_validate_structure_resolve_variables (action, action->structure,
       scenario->priv->vars, GST_VALIDATE_STRUCTURE_RESOLVE_VARIABLES_ALL);
   for (i = 0; type->parameters[i].name; i++) {
@@ -3815,7 +4051,7 @@ gst_validate_utils_get_structures (gpointer source,
   if (G_VALUE_HOLDS_STRING (value) || GST_VALUE_HOLDS_STRUCTURE (value))
     return add_gvalue_to_list_as_struct (source, res, value);
 
-  if (!GST_VALUE_HOLDS_LIST (value)) {
+  if (!GST_VALUE_HOLDS_LIST (value) && !GST_VALUE_HOLDS_ARRAY (value)) {
     g_error ("%s must have type list of structure/string (or a string), "
         "e.g. %s={ [struct1, a=val1], [struct2, a=val2] }, got: \"%s\" in %s",
         fieldname, fieldname, gst_value_serialize (value),
@@ -3823,11 +4059,15 @@ gst_validate_utils_get_structures (gpointer source,
     return NULL;
   }
 
-  size = gst_value_list_get_size (value);
+  size =
+      GST_VALUE_HOLDS_LIST (value) ? gst_value_list_get_size (value) :
+      gst_value_array_get_size (value);
   for (i = 0; i < size; i++)
     res =
         add_gvalue_to_list_as_struct (source, res,
-        gst_value_list_get_value (value, i));
+        GST_VALUE_HOLDS_LIST (value) ?
+        gst_value_list_get_value (value, i) :
+        gst_value_array_get_value (value, i));
 
   return res;
 }
@@ -3918,17 +4158,29 @@ gst_validate_foreach_prepare (GstValidateAction * action)
   i = g_list_index (scenario->priv->actions, action);
   for (it = min; it < max; it = it + step) {
     GstStructure *lvariables = gst_structure_new_empty ("vars");
+    const GValue *it_value = NULL;
 
-    if (it_array)
+    if (it_array) {
+      it_value = gst_value_array_get_value (it_array, it);
+
       gst_structure_set_value (lvariables,
-          GST_VALIDATE_ACTION_RANGE_NAME (action),
-          gst_value_array_get_value (it_array, it));
+          GST_VALIDATE_ACTION_RANGE_NAME (action), it_value);
+
+    }
 
     for (tmp = actions; tmp; tmp = tmp->next) {
-      scenario->priv->actions = g_list_insert (scenario->priv->actions,
+      GstValidateAction *subact =
           gst_validate_create_subaction (scenario, lvariables, action,
-              gst_structure_copy (tmp->data), it, max), i++);
+          gst_structure_copy (tmp->data), it, max);
+      scenario->priv->actions =
+          g_list_insert (scenario->priv->actions, subact, i++);
+      if (it_value) {
+        g_value_init (&subact->priv->it_value, G_VALUE_TYPE (it_value));
+        g_value_copy (it_value, &subact->priv->it_value);
+      }
     }
+
+    gst_structure_free (lvariables);
   }
   g_list_free_full (actions, (GDestroyNotify) gst_structure_free);
 
@@ -4187,6 +4439,28 @@ handle_bus_message (MessageData * d)
         goto done;
       }
 
+      if (is_error && priv->allow_errors) {
+        GST_INFO_OBJECT (scenario, "Got error but ignoring it!");
+        if (scenario->priv->needs_async_done || scenario->priv->changing_state) {
+
+          if (scenario->priv->actions) {
+            GstValidateAction *act =
+                gst_validate_action_ref (scenario->priv->actions->data);
+
+            GST_VALIDATE_REPORT_ACTION (scenario, act,
+                SCENARIO_ACTION_EXECUTION_ERROR,
+                "Error message happened while executing action");
+            gst_validate_action_set_done (act);
+
+            gst_validate_action_unref (act);
+          }
+
+          scenario->priv->needs_async_done = scenario->priv->changing_state =
+              FALSE;
+        }
+        goto done;
+      }
+
       GST_VALIDATE_SCENARIO_EOS_HANDLING_LOCK (scenario);
       {
         /* gst_validate_action_set_done() does not finish the action
@@ -4429,6 +4703,8 @@ gst_validate_scenario_load_structures (GstValidateScenario * scenario,
       gst_structure_get_boolean (structure, "handles-states",
           &priv->handles_state);
       gst_structure_get_boolean (structure, "ignore-eos", &priv->ignore_eos);
+      gst_structure_get_boolean (structure, "allow-errors",
+          &priv->allow_errors);
       gst_structure_get_boolean (structure, "actions-on-idle",
           &priv->execute_on_idle);
 
@@ -5016,6 +5292,8 @@ gst_validate_scenario_new (GstValidateRunner *
       g_object_new (GST_TYPE_VALIDATE_SCENARIO, "validate-runner",
       runner, NULL);
 
+  g_object_ref_sink (scenario);
+
   if (structures) {
     gboolean is_config;
     gst_validate_scenario_load_structures (scenario, structures, &is_config,
@@ -5121,7 +5399,7 @@ gst_validate_scenario_from_structs (GstValidateRunner * runner,
  * @pipeline: The pipeline to run the scenario on
  * @scenario_name: The name (or path) of the scenario to run
  *
- * Returns: (transfer full): A #GstValidateScenario or NULL
+ * Returns: (transfer full) (nullable): A #GstValidateScenario or NULL
  */
 GstValidateScenario *
 gst_validate_scenario_factory_create (GstValidateRunner *
@@ -5188,7 +5466,8 @@ _parse_scenario (GFile * f, GKeyFile * kf)
   gboolean ret = FALSE;
   gchar *path = g_file_get_path (f);
 
-  if (g_str_has_suffix (path, GST_VALIDATE_SCENARIO_SUFFIX)) {
+  if (g_str_has_suffix (path, GST_VALIDATE_SCENARIO_SUFFIX)
+      || g_str_has_suffix (path, GST_VALIDATE_VALIDATE_TEST_SUFFIX)) {
     GstStructure *meta = NULL;
     GList *tmp, *structures = gst_validate_structs_parse_from_gfile (f,
         (GstValidateGetIncludePathsFunc)
@@ -5210,6 +5489,7 @@ _parse_scenario (GFile * f, GKeyFile * kf)
       gst_structure_foreach (meta,
           (GstStructureForeachFunc) _add_description, &kfg);
       gst_structure_free (meta);
+      g_free (kfg.group_name);
     } else {
       g_key_file_set_string (kf, path, "noinfo", "nothing");
     }
@@ -5273,9 +5553,9 @@ gst_validate_list_scenarios (gchar ** scenarios, gint num_scenarios,
       if (!_parse_scenario (file, kf)) {
         GST_ERROR ("Could not parse scenario: %s", scenarios[i]);
 
-        gst_object_unref (file);
         res = 1;
       }
+      g_clear_object (&file);
     }
 
     goto done;
@@ -5286,29 +5566,30 @@ gst_validate_list_scenarios (gchar ** scenarios, gint num_scenarios,
     env_scenariodir = g_strsplit (envvar, ":", 0);
 
   _list_scenarios_in_dir (dir, kf);
-  g_object_unref (dir);
+  g_clear_object (&dir);
 
   tldir = g_build_filename (GST_DATADIR, "gstreamer-" GST_API_VERSION,
       "validate", GST_VALIDATE_SCENARIO_DIRECTORY, NULL);
   dir = g_file_new_for_path (tldir);
   _list_scenarios_in_dir (dir, kf);
-  g_object_unref (dir);
+  g_clear_object (&dir);
   g_free (tldir);
 
   if (env_scenariodir) {
     guint i;
+    GFile *subfile;
 
     for (i = 0; env_scenariodir[i]; i++) {
-      dir = g_file_new_for_path (env_scenariodir[i]);
-      _list_scenarios_in_dir (dir, kf);
-      g_object_unref (dir);
+      subfile = g_file_new_for_path (env_scenariodir[i]);
+      _list_scenarios_in_dir (subfile, kf);
+      g_clear_object (&subfile);
     }
   }
 
-  /* Hack to make it work uninstalled */
+  /* Hack to make it work within the development environment */
   dir = g_file_new_for_path ("data/scenarios");
   _list_scenarios_in_dir (dir, kf);
-  g_object_unref (dir);
+  g_clear_object (&dir);
 
 done:
   result = g_key_file_to_data (kf, &datalength, &err);
@@ -5331,6 +5612,7 @@ done:
 
     res = FALSE;
   }
+  g_clear_object (&dir);
 
   g_key_file_free (kf);
 
@@ -6095,8 +6377,10 @@ gst_validate_action_set_done (GstValidateAction * action)
   g_assert (!action->priv->pending_set_done);
   action->priv->pending_set_done = TRUE;
 
-  if (scenario && scenario->priv->wait_message_action == action)
+  if (scenario && scenario->priv->wait_message_action == action) {
+    gst_validate_action_unref (scenario->priv->wait_message_action);
     scenario->priv->wait_message_action = NULL;
+  }
   gst_clear_object (&scenario);
 
   g_main_context_invoke_full (action->priv->context,
@@ -6115,7 +6399,7 @@ gst_validate_action_set_done (GstValidateAction * action)
  *
  * Retrieve the scenario from which @action is executed.
  *
- * Returns: (transfer full): The scenario from which the action is being executed.
+ * Returns: (transfer full) (nullable): The scenario from which the action is being executed.
  */
 GstValidateScenario *
 gst_validate_action_get_scenario (GstValidateAction * action)
@@ -6549,6 +6833,15 @@ register_action_types (void)
         .possible_variables = NULL,
         .def = "false"
       },
+      {
+        .name = "allow-errors",
+        .description = "Ignore error messages and keep executing the\n"
+          "scenario when it happens. By default a 'stop' action is generated on ERROR messages",
+        .mandatory = FALSE,
+        .types = "boolean",
+        .possible_variables = NULL,
+        .def = "false"
+      },
       {NULL}
       }),
       "Scenario metadata.\nNOTE: it used to be called \"description\"",
@@ -6632,7 +6925,7 @@ register_action_types (void)
       "Sets pipeline to PAUSED. You can add a 'duration'\n"
       "parameter so the pipeline goes back to playing after that duration\n"
       "(in second)",
-      GST_VALIDATE_ACTION_TYPE_NEEDS_CLOCK & GST_VALIDATE_ACTION_TYPE_ASYNC);
+      GST_VALIDATE_ACTION_TYPE_NEEDS_CLOCK | GST_VALIDATE_ACTION_TYPE_ASYNC);
 
   REGISTER_ACTION_TYPE ("play", _execute_play, NULL,
       "Sets the pipeline state to PLAYING", GST_VALIDATE_ACTION_TYPE_NONE);
@@ -6709,7 +7002,8 @@ register_action_types (void)
         {
           .name = "non-blocking",
           .description = "**Only for signals**."
-            " Ensures that the signal is emitted without a blocking waiting.",
+            "Make the action non blocking meaning that next actions will be\n"
+            "executed without waiting for the signal to be emitted.",
           .mandatory = FALSE,
           .types = "string",
           NULL
@@ -6728,15 +7022,22 @@ register_action_types (void)
             "`message-type`). Example: "
             "wait, on-client=true, message-type=buffering, expected-values=[values, buffer-percent=100]",
           .mandatory = FALSE,
-          .types = "GstStructure",
+          .types = "structure",
           NULL
         },
         {
           .name = "on-clock",
-          .description = "Wait until the test clock get a new pending entry"
-            " see #gst_test_clock_wait_for_next_pending_id.",
+          .description = "Wait until the test clock gets a new pending entry.\n"
+            "See #gst_test_clock_wait_for_next_pending_id.",
           .mandatory = FALSE,
           .types = "boolean",
+          NULL
+        },
+        {
+          .name = "check",
+          .description = "The check action to execute when non blocking signal is received",
+          .mandatory = FALSE,
+          .types = "structure",
           NULL
         },
         {NULL}
@@ -6849,7 +7150,7 @@ register_action_types (void)
         },
         {
           .name = "interpolation-mode",
-          .description = "The name of the GstInterpolationMode to on the source",
+          .description = "The name of the GstInterpolationMode to set on the source",
           .types = "string",
           .mandatory = FALSE,
           .def = "linear",
@@ -6862,10 +7163,12 @@ register_action_types (void)
         },
         {NULL}
       }),
-        "Sets GstTimedValue on pads on elements properties using GstControlBindings \n"
+        "Sets GstTimedValue on pads on elements properties using GstControlBindings\n"
         "and GstControlSource as defined in the parameters.\n"
         "The properties values to set will be defined as:\n\n"
-        "    element-name.padname::property-name=new-value\n\n"
+        "```\n"
+        "element-name.padname::property-name=new-value\n"
+        "```\n\n"
         "> NOTE: `.padname` is not needed if setting a property on an element\n\n"
         "This action also adds necessary control source/control bindings.\n",
       GST_VALIDATE_ACTION_TYPE_NONE);
@@ -6876,9 +7179,11 @@ register_action_types (void)
       }),
         "Check elements and pads properties values.\n"
         "The properties values to check will be defined as:\n\n"
-        "    element-name.padname::property-name\n\n"
+        "```\n"
+        "element-name.padname::property-name\n"
+        "```\n\n"
         "> NOTE: `.padname` is not needed if checking an element property\n\n",
-      GST_VALIDATE_ACTION_TYPE_NONE);
+      GST_VALIDATE_ACTION_TYPE_CHECK);
 
   REGISTER_ACTION_TYPE ("set-properties", _execute_set_or_check_properties,
       ((GstValidateActionParameter []) {
@@ -6886,8 +7191,10 @@ register_action_types (void)
       }),
         "Set elements and pads properties values.\n"
         "The properties values to set will be defined as:\n\n"
-        "    element-name.padname::property-name\n\n"
-        "> NOTE: `.padname` is not needed if checking an element property\n\n",
+        "```\n"
+        "    element-name.padname::property-name\n"
+        "```\n\n"
+        "> NOTE: `.padname` is not needed if set an element property\n\n",
       GST_VALIDATE_ACTION_TYPE_NONE);
 
   REGISTER_ACTION_TYPE ("set-property", _execute_set_or_check_property,
@@ -6976,7 +7283,7 @@ register_action_types (void)
       "Check the value of property of an element or klass of elements in the pipeline.\n"
       "Besides property-name and value, either 'target-element-name' or\n"
       "'target-element-klass' needs to be defined",
-      GST_VALIDATE_ACTION_TYPE_NONE);
+      GST_VALIDATE_ACTION_TYPE_CHECK);
 
   REGISTER_ACTION_TYPE ("set-debug-threshold",
       _execute_set_debug_threshold,
@@ -7008,6 +7315,13 @@ register_action_types (void)
           .description = "The name of the signal to emit on @target-element-name",
           .mandatory = TRUE,
           .types = "string",
+          NULL
+        },
+        {
+          .name = "params",
+          .description = "The signal parameters",
+          .mandatory = FALSE,
+          .types = "ValueArray",
           NULL
         },
         {NULL}
@@ -7048,9 +7362,41 @@ register_action_types (void)
           .mandatory = FALSE,
           .types = "caps"
         },
+        {
+          .name = "pts",
+          .description = "Buffer PTS",
+          .mandatory = FALSE,
+          .types = "GstClockTime"
+        },
+        {
+          .name = "dts",
+          .description = "Buffer DTS",
+          .mandatory = FALSE,
+          .types = "GstClockTime"
+        },
+        {
+          .name = "duration",
+          .description = "Buffer duration",
+          .mandatory = FALSE,
+          .types = "GstClockTime"
+        },
+        {
+          .name = "segment",
+          .description = "The GstSegment to configure as part of the sample",
+          .mandatory = FALSE,
+          .types = "(GstStructure)segment,"
+                      "[start=(GstClockTime)]"
+                      "[stop=(GstClockTime)]"
+                      "[base=(GstClockTime)]"
+                      "[offset=(GstClockTime)]"
+                      "[time=(GstClockTime)]"
+                      "[postion=(GstClockTime)]"
+                      "[duration=(GstClockTime)]"
+        },
         {NULL}
       }),
-      "Queues a buffer in an appsrc. If the pipeline state allows flow of buffers, the next action is not run until the buffer has been pushed.",
+      "Queues a sample in an appsrc. If the pipeline state allows flow of buffers, "
+      " the next action is not run until the buffer has been pushed.",
       GST_VALIDATE_ACTION_TYPE_NONE);
 
   REGISTER_ACTION_TYPE ("appsrc-eos", _execute_appsrc_eos,
@@ -7154,7 +7500,7 @@ register_action_types (void)
       " This allows checking the checksum of a buffer after a 'seek' or after a"
       " GESTimeline 'commit'"
       " for example",
-      GST_VALIDATE_ACTION_TYPE_NON_BLOCKING);
+      GST_VALIDATE_ACTION_TYPE_NON_BLOCKING | GST_VALIDATE_ACTION_TYPE_CHECK);
 
     REGISTER_ACTION_TYPE ("crank-clock", _execute_crank_clock,
       ((GstValidateActionParameter []) {
@@ -7268,13 +7614,64 @@ register_action_types (void)
               NULL },
         {NULL}
       }),
-      "Check current pipeline position.\n", GST_VALIDATE_ACTION_TYPE_NONE);
+      "Check current pipeline position.\n",
+      /* FIXME: Make MT safe so it can be marked as GST_VALIDATE_ACTION_TYPE_CHECK */
+      GST_VALIDATE_ACTION_TYPE_NONE);
+
+  REGISTER_ACTION_TYPE("check-current-pad-caps", _execute_check_pad_caps,
+      ((GstValidateActionParameter[]) {
+        {
+           .name = "expected-caps",
+           .description = "The expected caps. If not present, expected no caps to be set",
+           .mandatory = FALSE,
+           .types = "caps,structure",
+           NULL
+        },
+        {
+          .name = "target-element-name",
+          .description = "The name of the GstElement to send a send force-key-unit to",
+          .mandatory = FALSE,
+          .types = "string",
+          NULL
+        },
+        {
+          .name = "target-element-factory-name",
+          .description = "The factory name of the GstElements to get pad from",
+          .mandatory = FALSE,
+          .types = "string",
+          NULL
+        },
+        {
+          .name = "target-element-klass",
+          .description = "The klass of the GstElements to get pad from",
+          .mandatory = FALSE,
+          .types = "string",
+          NULL
+        },
+        {
+          .name = "pad",
+          .description = "The name of the GstPad to get pad from",
+          .mandatory = FALSE,
+          .types = "string",
+          NULL
+        },
+        {
+          .name = "comparison-type",
+          .description = "",
+          .mandatory = FALSE,
+          .types = "string in [intersect, equal]",
+          NULL
+        },
+        {NULL}
+      }),
+      "Check currently set caps on a particular pad.\n",
+      GST_VALIDATE_ACTION_TYPE_NONE | GST_VALIDATE_ACTION_TYPE_CHECK );
 
   REGISTER_ACTION_TYPE("run-command", _run_command,
       ((GstValidateActionParameter[]) {
           {
             .name = "argv",
-            .description = "The subprocess arguments",
+            .description = "The subprocess arguments, include the program name itself",
             .mandatory = TRUE,
             .types = "(string){array,}",
             NULL
@@ -7283,12 +7680,12 @@ register_action_types (void)
             .name = "env",
             .description = "Extra environment variables to set",
             .mandatory = FALSE,
-            .types = "GstStructure",
+            .types = "structure",
             NULL
           },
         {NULL}
       }),
-      "Check current pipeline position.\n",
+      "Run an external command.\n",
       GST_VALIDATE_ACTION_TYPE_CAN_BE_OPTIONAL);
 
     REGISTER_ACTION_TYPE("foreach", NULL,
@@ -7296,14 +7693,14 @@ register_action_types (void)
             { .name = "actions",
                 .description = "The array of actions to repeat",
                 .mandatory = TRUE,
-                .types = "strv",
+                .types = "{array of [structures]}",
                 NULL },
             { NULL } }),
         "Run actions defined in the `actions` array the number of times specified\n"
-        " with an iterator parameter passed in. The iterator can be\n"
-        " a range like :`i=[start, end, step]` or array of values\n"
-        " such as: `values=<value1, value2>`.\n"
-        "One and only iterator field is required as parameter.",
+        "with an iterator parameter passed in. The iterator can be\n"
+        "a range like: `i=[start, end, step]` or array of values\n"
+        "such as: `values=<value1, value2>`.\n"
+        "One and only one iterator field is supported as parameter.",
         GST_VALIDATE_ACTION_TYPE_NONE);
     type->prepare = gst_validate_foreach_prepare;
 

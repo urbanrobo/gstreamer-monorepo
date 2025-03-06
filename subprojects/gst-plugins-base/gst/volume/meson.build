@@ -1,4 +1,4 @@
-volume_deps = glib_deps + [audio_dep, gst_dep, gst_base_dep]
+volume_deps = [audio_dep, gst_dep, gst_base_dep]
 orcsrc = 'gstvolumeorc'
 if have_orcc
   volume_deps += [orc_dep]
@@ -27,5 +27,4 @@ gstvolume = library('gstvolume', 'gstvolume.c', orc_c, orc_h,
   install : true,
   install_dir : plugins_install_dir,
 )
-pkgconfig.generate(gstvolume, install_dir : plugins_pkgconfig_install_dir)
 plugins += [gstvolume]

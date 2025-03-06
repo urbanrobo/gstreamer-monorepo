@@ -575,7 +575,7 @@ ges_project_class_init (GESProjectClass * klass)
    * }
    * ]|
    *
-   * Returns: (transfer full) (allow-none): The new URI of @wrong_asset
+   * Returns: (transfer full) (nullable): The new URI of @wrong_asset
    */
   _signals[MISSING_URI_SIGNAL] =
       g_signal_new ("missing-uri", G_TYPE_FROM_CLASS (klass),
@@ -687,7 +687,7 @@ ges_project_try_updating_id (GESProject * project, GESAsset * asset,
         "and error: %s", g_type_name (G_OBJECT_TYPE (asset)), id,
         error->message);
     _send_error_loading_asset (project, asset, error);
-
+    g_free (new_id);
     return NULL;
   }
 
@@ -996,7 +996,7 @@ ges_project_remove_asset (GESProject * project, GESAsset * asset)
  * @extractable_type: The extractable_type of the asset
  * to retrieve from @object
  *
- * Returns: (transfer full) (allow-none): The #GESAsset with
+ * Returns: (transfer full) (nullable): The #GESAsset with
  * @id or %NULL if no asset with @id as an ID
  */
 GESAsset *
@@ -1064,7 +1064,7 @@ ges_project_list_assets (GESProject * project, GType filter)
  * from which the timeline as been loaded or default to the best formatter
  * as defined in #ges_find_formatter_for_uri
  * @overwrite: %TRUE to overwrite file if it exists
- * @error: (out) (allow-none): An error to be set in case something wrong happens or %NULL
+ * @error: An error to be set in case something wrong happens or %NULL
  *
  * Save the timeline of @project to @uri. You should make sure that @timeline
  * is one of the timelines that have been extracted from @project
@@ -1172,7 +1172,7 @@ ges_project_new (const gchar * uri)
  * ges_project_load:
  * @project: A #GESProject that has an @uri set already
  * @timeline: A blank timeline to load @project into
- * @error: (out) (allow-none): An error to be set in case something wrong happens or %NULL
+ * @error: An error to be set in case something wrong happens or %NULL
  *
  * Loads @project into @timeline
  *

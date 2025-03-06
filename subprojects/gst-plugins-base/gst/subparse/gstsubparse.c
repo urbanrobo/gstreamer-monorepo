@@ -185,6 +185,7 @@ gst_sub_parse_init (GstSubParse * subparse)
   subparse->strip_pango_markup = FALSE;
   subparse->flushing = FALSE;
   gst_segment_init (&subparse->segment, GST_FORMAT_TIME);
+  subparse->segment_seqnum = gst_util_seqnum_next ();
   subparse->need_segment = TRUE;
   subparse->encoding = g_strdup (DEFAULT_ENCODING);
   subparse->detected_encoding = NULL;
@@ -609,8 +610,7 @@ parse_mdvdsub (ParserState * state, const gchar * line)
       break;
     }
   }
-  ret = markup->str;
-  g_string_free (markup, FALSE);
+  ret = g_string_free (markup, FALSE);
   GST_DEBUG ("parse_mdvdsub returning (%f+%f): %s",
       state->start_time / (double) GST_SECOND,
       state->duration / (double) GST_SECOND, ret);
@@ -778,19 +778,23 @@ subrip_fix_up_markup (gchar ** p_txt, gconstpointer allowed_tags_ptr)
     }
 
     if (*next_tag == '<' && *(next_tag + 1) == '/') {
-      end_tag = strchr (cur, '>');
+      end_tag = strchr (next_tag, '>');
       if (end_tag) {
         const gchar *last = NULL;
         if (num_open_tags > 0)
           last = g_ptr_array_index (open_tags, num_open_tags - 1);
         if (num_open_tags == 0
             || g_ascii_strncasecmp (end_tag - 1, last, strlen (last))) {
-          GST_LOG ("broken input, closing tag '%s' is not open", end_tag - 1);
-          memmove (next_tag, end_tag + 1, strlen (end_tag) + 1);
-          next_tag -= strlen (end_tag);
+          GST_LOG ("broken input, closing tag '%s' is not open", next_tag);
+          /* Move everything after the tag end, including closing \0 */
+          memmove (next_tag, end_tag + 1, strlen (end_tag));
+          cur = next_tag;
+          continue;
         } else {
           --num_open_tags;
           g_ptr_array_remove_index (open_tags, num_open_tags);
+          cur = end_tag + 1;
+          continue;
         }
       }
     }
@@ -1064,6 +1068,11 @@ parse_lrc (ParserState * state, const gchar * line)
     return NULL;
 
   start = strchr (line, ']');
+  // sscanf() does not check for the trailing ] but only up to the last
+  // placeholder, so there might be no ] at the end.
+  if (!start)
+    return NULL;
+
   if (start - line == 9)
     milli = 10;
   else
@@ -1599,25 +1608,9 @@ done:
 }
 
 static GstFlowReturn
-handle_buffer (GstSubParse * self, GstBuffer * buf)
+check_initial_events (GstSubParse * self)
 {
-  GstFlowReturn ret = GST_FLOW_OK;
-  gchar *line, *subtitle;
   gboolean need_tags = FALSE;
-
-  if (self->first_buffer) {
-    GstMapInfo map;
-
-    gst_buffer_map (buf, &map, GST_MAP_READ);
-    self->detected_encoding =
-        gst_sub_parse_detect_encoding ((gchar *) map.data, map.size);
-    gst_buffer_unmap (buf, &map);
-    self->first_buffer = FALSE;
-    self->state.fps_n = self->fps_n;
-    self->state.fps_d = self->fps_d;
-  }
-
-  feed_textbuf (self, buf);
 
   /* make sure we know the format */
   if (G_UNLIKELY (self->parser_type == GST_SUB_PARSE_FORMAT_UNKNOWN)) {
@@ -1639,10 +1632,12 @@ handle_buffer (GstSubParse * self, GstBuffer * buf)
 
   /* Push newsegment if needed */
   if (self->need_segment) {
+    GstEvent *segment_event = gst_event_new_segment (&self->segment);
     GST_LOG_OBJECT (self, "pushing newsegment event with %" GST_SEGMENT_FORMAT,
         &self->segment);
 
-    gst_pad_push_event (self->srcpad, gst_event_new_segment (&self->segment));
+    gst_event_set_seqnum (segment_event, self->segment_seqnum);
+    gst_pad_push_event (self->srcpad, segment_event);
     self->need_segment = FALSE;
   }
 
@@ -1656,6 +1651,35 @@ handle_buffer (GstSubParse * self, GstBuffer * buf)
       gst_pad_push_event (self->srcpad, gst_event_new_tag (tags));
     }
   }
+
+  return GST_FLOW_OK;
+}
+
+static GstFlowReturn
+handle_buffer (GstSubParse * self, GstBuffer * buf)
+{
+  GstFlowReturn ret = GST_FLOW_OK;
+  gchar *line, *subtitle;
+
+  GST_DEBUG_OBJECT (self, "%" GST_PTR_FORMAT, buf);
+
+  if (self->first_buffer) {
+    GstMapInfo map;
+
+    gst_buffer_map (buf, &map, GST_MAP_READ);
+    self->detected_encoding =
+        gst_sub_parse_detect_encoding ((gchar *) map.data, map.size);
+    gst_buffer_unmap (buf, &map);
+    self->first_buffer = FALSE;
+    self->state.fps_n = self->fps_n;
+    self->state.fps_d = self->fps_d;
+  }
+
+  feed_textbuf (self, buf);
+
+  ret = check_initial_events (self);
+  if (ret != GST_FLOW_OK)
+    return ret;
 
   while (!self->flushing && (line = get_next_line (self))) {
     guint offset = 0;
@@ -1790,6 +1814,7 @@ gst_sub_parse_sink_event (GstPad * pad, GstObject * parent, GstEvent * event)
         gst_event_copy_segment (event, &self->segment);
       GST_DEBUG_OBJECT (self, "newsegment (%s)",
           gst_format_get_name (self->segment.format));
+      self->segment_seqnum = gst_event_get_seqnum (event);
 
       /* if not time format, we'll either start with a 0 timestamp anyway or
        * it's following a seek in which case we'll have saved the requested
@@ -1805,6 +1830,16 @@ gst_sub_parse_sink_event (GstPad * pad, GstObject * parent, GstEvent * event)
        * trigger sending of the saved requested seek segment
        * or the one taken here from upstream */
       self->need_segment = TRUE;
+      break;
+    }
+    case GST_EVENT_GAP:
+    {
+      ret = check_initial_events (self);
+      if (ret == GST_FLOW_OK) {
+        ret = gst_pad_event_default (pad, parent, event);
+      } else {
+        gst_event_unref (event);
+      }
       break;
     }
     case GST_EVENT_FLUSH_START:

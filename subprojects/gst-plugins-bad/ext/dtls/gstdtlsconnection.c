@@ -107,8 +107,8 @@ struct _GstDtlsConnectionPrivate
   GThreadPool *thread_pool;
 };
 
-G_DEFINE_TYPE_WITH_CODE (GstDtlsConnection, gst_dtls_connection, G_TYPE_OBJECT,
-    G_ADD_PRIVATE (GstDtlsConnection)
+G_DEFINE_TYPE_WITH_CODE (GstDtlsConnection, gst_dtls_connection,
+    GST_TYPE_OBJECT, G_ADD_PRIVATE (GstDtlsConnection)
     GST_DEBUG_CATEGORY_INIT (gst_dtls_connection_debug, "dtlsconnection", 0,
         "DTLS Connection"));
 
@@ -449,7 +449,7 @@ gst_dtls_connection_check_timeout_locked (GstDtlsConnection * self)
   priv = self->priv;
 
   if (DTLSv1_get_timeout (priv->ssl, &timeout)) {
-    wait_time = timeout.tv_sec * G_USEC_PER_SEC + timeout.tv_usec;
+    wait_time = ((gint64) timeout.tv_sec) * G_USEC_PER_SEC + timeout.tv_usec;
 
     GST_DEBUG_OBJECT (self, "waiting for %" G_GINT64_FORMAT " usec", wait_time);
     if (wait_time) {

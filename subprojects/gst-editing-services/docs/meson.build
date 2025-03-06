@@ -38,7 +38,7 @@ endif
 plugins_cache = join_paths(meson.current_source_dir(), 'gst_plugins_cache.json')
 
 if plugins_cache_generator.found()
-    plugins_doc_dep = custom_target('editing-services-doc-cache',
+    gst_plugins_doc_dep = custom_target('editing-services-doc-cache',
         command: [plugins_cache_generator, plugins_cache, '@OUTPUT@', '@INPUT@'],
         input: plugins,
         output: 'gst_plugins_cache.json',
@@ -108,6 +108,7 @@ libs_doc = [hotdoc.generate_doc('gst-editing-services',
     gi_order_generated_subpages: true,
     dependencies: [ges_dep],
     disable_incremental_build: true,
+    depends: ges_gir[0],
 )]
 
 plugins_doc = []
@@ -128,7 +129,7 @@ foreach plugin_name: list_plugin_res.stdout().split(':')
         gst_index: 'plugins/index.md',
         gst_smart_index: true,
         gst_c_sources: ['../plugins/*/*.[ch]',],
-        dependencies: [gst_dep, plugins],
+        dependencies: [gst_dep],
         gst_order_generated_subpages: true,
         gst_cache_file: plugins_cache,
         gst_plugin_name: plugin_name,

@@ -25,7 +25,34 @@
 #pragma message ("You can define GST_USE_UNSTABLE_API to avoid this warning.")
 #endif
 
+/**
+ * GstVaFeature:
+ * @GST_VA_FEATURE_DISABLED: The feature is disabled.
+ * @GST_VA_FEATURE_ENABLED: The feature is enabled.
+ * @GST_VA_FEATURE_AUTO: The feature is enabled automatically.
+ *
+ * Since: 1.22
+ */
+typedef enum
+{
+  GST_VA_FEATURE_DISABLED,
+  GST_VA_FEATURE_ENABLED,
+  GST_VA_FEATURE_AUTO,
+} GstVaFeature;
+
+enum
+{
+  /* jpeg decoder in i965 driver cannot create surfaces with fourcc */
+  GST_VA_HACK_SURFACE_NO_FOURCC = 1 << 0,
+};
+
+#include <gst/va/va-prelude.h>
+#include <gst/va/va-enumtypes.h>
 #include <gst/va/gstvadisplay.h>
 #include <gst/va/gstvadisplay_drm.h>
 #include <gst/va/gstvadisplay_wrapped.h>
+
+#include <gst/va/gstvaallocator.h>
+#include <gst/va/gstvapool.h>
+
 #include <gst/va/gstvautils.h>

@@ -1038,24 +1038,21 @@ gst_validate_pad_monitor_init (GstValidatePadMonitor * pad_monitor)
 /**
  * gst_validate_pad_monitor_new:
  * @pad: (transfer none): a #GstPad to run Validate on
+ * @runner: (transfer none): a #GstValidateRunner
+ * @parent: (nullable): The parent of the new monitor
+ *
+ * Returns: (transfer full): A #GstValidatePadMonitor
  */
 GstValidatePadMonitor *
 gst_validate_pad_monitor_new (GstPad * pad, GstValidateRunner * runner,
     GstValidateElementMonitor * parent)
 {
-  GstValidatePadMonitor *monitor = g_object_new (GST_TYPE_VALIDATE_PAD_MONITOR,
+  g_return_val_if_fail (GST_IS_PAD (pad), NULL);
+  g_return_val_if_fail (runner != NULL, NULL);
+
+  return g_object_new (GST_TYPE_VALIDATE_PAD_MONITOR,
       "object", pad, "validate-runner", runner, "validate-parent",
       parent, NULL);
-  GstObject *target =
-      gst_validate_monitor_get_target (GST_VALIDATE_MONITOR (monitor));
-
-  if (target == NULL) {
-    g_object_unref (monitor);
-    return NULL;
-  }
-
-  gst_object_unref (target);
-  return monitor;
 }
 
 static GstElement *

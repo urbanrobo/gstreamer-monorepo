@@ -73,7 +73,7 @@ struct _GstV4l2CodecVp9Dec
   GstV4l2CodecAllocator *src_allocator;
   GstV4l2CodecPool *src_pool;
   gboolean has_videometa;
-  gboolean need_negotiation;
+  gboolean streaming;
   gboolean copy_frames;
 
   struct v4l2_ctrl_vp9_frame v4l2_vp9_frame;
@@ -273,17 +273,20 @@ gst_v4l2_codecs_vp9_dec_fill_refs (GstV4l2CodecVp9Dec * self,
 
   if (reference_frames && reference_frames->pic_list[h->ref_frame_idx[0]]) {
     ref_pic = reference_frames->pic_list[h->ref_frame_idx[0]];
-    self->v4l2_vp9_frame.last_frame_ts = ref_pic->system_frame_number * 1000;
+    self->v4l2_vp9_frame.last_frame_ts =
+        ref_pic->system_frame_number * G_GUINT64_CONSTANT (1000);
   }
 
   if (reference_frames && reference_frames->pic_list[h->ref_frame_idx[1]]) {
     ref_pic = reference_frames->pic_list[h->ref_frame_idx[1]];
-    self->v4l2_vp9_frame.golden_frame_ts = ref_pic->system_frame_number * 1000;
+    self->v4l2_vp9_frame.golden_frame_ts =
+        ref_pic->system_frame_number * G_GUINT64_CONSTANT (1000);
   }
 
   if (reference_frames && reference_frames->pic_list[h->ref_frame_idx[2]]) {
     ref_pic = reference_frames->pic_list[h->ref_frame_idx[2]];
-    self->v4l2_vp9_frame.alt_frame_ts = ref_pic->system_frame_number * 1000;
+    self->v4l2_vp9_frame.alt_frame_ts =
+        ref_pic->system_frame_number * G_GUINT64_CONSTANT (1000);
   }
 }
 
@@ -308,7 +311,6 @@ gst_v4l2_codec_vp9_dec_fill_dec_params (GstV4l2CodecVp9Dec * self,
     .compressed_header_size = h->header_size_in_bytes,
     .uncompressed_header_size = h->frame_header_length_in_bytes,
     .profile = h->profile,
-    .reset_frame_context = h->reset_frame_context,
     .frame_context_idx = h->frame_context_idx,
     .bit_depth = self->bit_depth,
     .interpolation_filter = h->interpolation_filter,
@@ -350,11 +352,25 @@ gst_v4l2_codec_vp9_dec_fill_dec_params (GstV4l2CodecVp9Dec * self,
   };
   /* *INDENT-ON* */
 
+  switch (h->reset_frame_context) {
+    case 0:
+    case 1:
+      self->v4l2_vp9_frame.reset_frame_context = V4L2_VP9_RESET_FRAME_CTX_NONE;
+      break;
+    case 2:
+      self->v4l2_vp9_frame.reset_frame_context = V4L2_VP9_RESET_FRAME_CTX_SPEC;
+      break;
+    case 3:
+      self->v4l2_vp9_frame.reset_frame_context = V4L2_VP9_RESET_FRAME_CTX_ALL;
+      break;
+    default:
+      break;
+  }
+
   gst_v4l2_codecs_vp9_dec_fill_refs (self, h, reference_frames);
   gst_v4l2_codec_vp9_dec_fill_lf_params (self, &h->loop_filter_params);
   gst_v4l2_codec_vp9_dec_fill_seg_params (self, &h->segmentation_params);
 }
-
 
 static gboolean
 gst_v4l2_codec_vp9_dec_open (GstVideoDecoder * decoder)
@@ -386,6 +402,16 @@ gst_v4l2_codec_vp9_dec_close (GstVideoDecoder * decoder)
   GstV4l2CodecVp9Dec *self = GST_V4L2_CODEC_VP9_DEC (decoder);
   gst_v4l2_decoder_close (self->decoder);
   return TRUE;
+}
+
+static void
+gst_v4l2_codec_vp9_dec_streamoff (GstV4l2CodecVp9Dec * self)
+{
+  if (self->streaming) {
+    gst_v4l2_decoder_streamoff (self->decoder, GST_PAD_SINK);
+    gst_v4l2_decoder_streamoff (self->decoder, GST_PAD_SRC);
+    self->streaming = FALSE;
+  }
 }
 
 static void
@@ -438,14 +464,10 @@ gst_v4l2_codec_vp9_dec_negotiate (GstVideoDecoder * decoder)
 
   GstCaps *filter, *caps;
   /* Ignore downstream renegotiation request. */
-  if (!self->need_negotiation)
-    return TRUE;
-  self->need_negotiation = FALSE;
+  if (self->streaming)
+    goto done;
 
   GST_DEBUG_OBJECT (self, "Negotiate");
-
-  gst_v4l2_decoder_streamoff (self->decoder, GST_PAD_SINK);
-  gst_v4l2_decoder_streamoff (self->decoder, GST_PAD_SRC);
 
   gst_v4l2_codec_vp9_dec_reset_allocation (self);
 
@@ -486,6 +508,7 @@ gst_v4l2_codec_vp9_dec_negotiate (GstVideoDecoder * decoder)
   }
   gst_caps_unref (caps);
 
+done:
   if (self->output_state)
     gst_video_codec_state_unref (self->output_state);
 
@@ -497,6 +520,9 @@ gst_v4l2_codec_vp9_dec_negotiate (GstVideoDecoder * decoder)
   self->output_state->caps = gst_video_info_to_caps (&self->output_state->info);
 
   if (GST_VIDEO_DECODER_CLASS (parent_class)->negotiate (decoder)) {
+    if (self->streaming)
+      return TRUE;
+
     if (!gst_v4l2_decoder_streamon (self->decoder, GST_PAD_SINK)) {
       GST_ELEMENT_ERROR (self, RESOURCE, FAILED,
           ("Could not enable the decoder driver."),
@@ -510,6 +536,8 @@ gst_v4l2_codec_vp9_dec_negotiate (GstVideoDecoder * decoder)
           ("VIDIOC_STREAMON(SRC) failed: %s", g_strerror (errno)));
       return FALSE;
     }
+
+    self->streaming = TRUE;
 
     return TRUE;
   }
@@ -567,7 +595,7 @@ gst_v4l2_codec_vp9_dec_decide_allocation (GstVideoDecoder * decoder,
 
 static GstFlowReturn
 gst_v4l2_codec_vp9_dec_new_sequence (GstVp9Decoder * decoder,
-    const GstVp9FrameHeader * frame_hdr)
+    const GstVp9FrameHeader * frame_hdr, gint max_dpb_size)
 {
   GstV4l2CodecVp9Dec *self = GST_V4L2_CODEC_VP9_DEC (decoder);
   gboolean negotiation_needed = FALSE;
@@ -632,7 +660,7 @@ gst_v4l2_codec_vp9_dec_new_sequence (GstVp9Decoder * decoder,
     gst_v4l2_codec_vp9_dec_fill_prob_updates (self, frame_hdr);
 
   if (negotiation_needed) {
-    self->need_negotiation = TRUE;
+    gst_v4l2_codec_vp9_dec_streamoff (self);
     if (!gst_video_decoder_negotiate (GST_VIDEO_DECODER (self))) {
       GST_ERROR_OBJECT (self, "Failed to negotiate with downstream");
       return GST_FLOW_ERROR;
@@ -723,7 +751,9 @@ gst_v4l2_codec_vp9_dec_decode_picture (GstVp9Decoder * decoder,
   }
 
   gst_v4l2_codec_vp9_dec_fill_dec_params (self, &picture->frame_hdr, dpb);
-  gst_v4l2_codec_vp9_dec_fill_prob_updates (self, &picture->frame_hdr);
+
+  if (decoder->parse_compressed_headers)
+    gst_v4l2_codec_vp9_dec_fill_prob_updates (self, &picture->frame_hdr);
 
   memcpy (bitstream_data, picture->data, picture->size);
   self->bitstream_map.size = picture->size;
@@ -916,6 +946,13 @@ gst_v4l2_codec_vp9_dec_output_picture (GstVp9Decoder * decoder,
   GstVideoDecoder *vdec = GST_VIDEO_DECODER (decoder);
   GstV4l2Request *request = NULL;
   gint ret;
+
+  if (picture->discont_state) {
+    if (!gst_video_decoder_negotiate (vdec)) {
+      GST_ERROR_OBJECT (vdec, "Could not re-negotiate with updated state");
+      return FALSE;
+    }
+  }
 
   GST_DEBUG_OBJECT (self, "Output picture %u", picture->system_frame_number);
 

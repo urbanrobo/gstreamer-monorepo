@@ -97,7 +97,7 @@ gst_parse_vorbis_header_packet (GstOggStream * pad, ogg_packet * packet)
   pad->nsn_increment = short_size >> 1;
 }
 
-void
+int
 gst_parse_vorbis_setup_packet (GstOggStream * pad, ogg_packet * op)
 {
   /*
@@ -165,6 +165,10 @@ gst_parse_vorbis_setup_packet (GstOggStream * pad, ogg_packet * op)
     if (offset == 0) {
       offset = 8;
       current_pos -= 1;
+
+      /* have we underrun? */
+      if (current_pos < op->packet)
+        return -1;
     }
   }
 
@@ -177,6 +181,10 @@ gst_parse_vorbis_setup_packet (GstOggStream * pad, ogg_packet * op)
     offset = (offset + 7) % 8;
     if (offset == 7)
       current_pos -= 1;
+
+    /* have we underrun? */
+    if (current_pos < op->packet + 5)
+      return -1;
 
     if (((current_pos[-5] & ~((1 << (offset + 1)) - 1)) != 0)
         ||
@@ -199,9 +207,18 @@ gst_parse_vorbis_setup_packet (GstOggStream * pad, ogg_packet * op)
   /* Give ourselves a chance to recover if we went back too far by using
    * the size check. */
   for (ii = 0; ii < 2; ii++) {
+
     if (offset > 4) {
+      /* have we underrun? */
+      if (current_pos < op->packet)
+        return -1;
+
       size_check = (current_pos[0] >> (offset - 5)) & 0x3F;
     } else {
+      /* have we underrun? */
+      if (current_pos < op->packet + 1)
+        return -1;
+
       /* mask part of byte from current_pos */
       size_check = (current_pos[0] & ((1 << (offset + 1)) - 1));
       /* shift to appropriate position */
@@ -220,6 +237,10 @@ gst_parse_vorbis_setup_packet (GstOggStream * pad, ogg_packet * op)
       current_pos += 1;
     current_pos += 5;
     size -= 1;
+
+    /* have we overrun? */
+    if (current_pos >= op->packet + op->bytes)
+      return -1;
   }
 
   /* Store mode size information in our info struct */
@@ -229,12 +250,21 @@ gst_parse_vorbis_setup_packet (GstOggStream * pad, ogg_packet * op)
 
   mode_size_ptr = pad->vorbis_mode_sizes;
 
+  if (size > G_N_ELEMENTS (pad->vorbis_mode_sizes)) {
+    return -1;
+  }
+
   for (i = 0; i < size; i++) {
     offset = (offset + 1) % 8;
     if (offset == 0)
       current_pos += 1;
     *mode_size_ptr++ = (current_pos[0] >> offset) & 0x1;
     current_pos += 5;
+
+    /* have we overrun? */
+    if (current_pos >= op->packet + op->bytes)
+      return -1;
   }
 
+  return 0;
 }

@@ -1,3 +1,4 @@
+runner_file = files('gst-validate-runner.c')
 gstvalidate_sources = files(
     'gst-validate-reporter.c',
     'gst-validate-mockdecryptor.c',
@@ -55,48 +56,48 @@ gst_validate_enums = gnome.mkenums('gstvalidateenumtypes',
   install_header : true,
   install_dir : join_paths(get_option('includedir'), 'gstreamer-1.0/gst/validate'))
 
-validate_deps = [gst_check_dep, gst_dep, gst_controller_dep, gstbase_dep, glib_dep, gio_dep, gmodule_dep, gst_pbutils_dep, mathlib, json_dep]
-gstvalidate = library('gstvalidate-1.0',
-    sources: files('gst-validate-runner.c') + gstvalidate_sources + gst_validate_enums,
+validate_deps = [gst_check_dep, gst_dep, gst_controller_dep, gstbase_dep,
+                 gio_dep, gmodule_dep, gst_pbutils_dep, mathlib, json_dep]
+gstvalidate = library('gstvalidate-@0@'.format(apiversion),
+    sources: gstvalidate_sources + gst_validate_enums + runner_file,
     version : libversion,
     soversion : soversion,
     darwin_versions : osxversion,
     include_directories : [inc_dirs],
     install: true,
-    c_args : [gst_c_args] + ['-D_GNU_SOURCE'],
+    c_args : [gst_c_args] + ['-D_GNU_SOURCE', '-DBUILDING_GST_VALIDATE'],
     dependencies : validate_deps)
 
 if not static_build
   gstvalidatetracer = library('gstvalidatetracer',
-      sources: files('gst-validate-runner.c') + gst_validate_enums,
+      sources: gst_validate_enums + runner_file,
       include_directories : [inc_dirs],
       install: true,
-      c_args : [gst_c_args] + ['-D__GST_VALIDATE_PLUGIN', '-D_GNU_SOURCE'],
+      c_args : [gst_c_args] + ['-D__GST_VALIDATE_PLUGIN', '-D_GNU_SOURCE', '-DBUILDING_GST_VALIDATE'],
       install_dir : plugins_install_dir,
       objects: gstvalidate.extract_objects(gstvalidate_sources),
       dependencies : validate_deps)
   plugins += gstvalidatetracer
 
-  pkgconfig.generate(gstvalidatetracer, install_dir : plugins_pkgconfig_install_dir)
 else
   warning('Statically building GstValidate as a tracer is not supported yet.')
 endif
 
 
-pkg_name = 'gst-validate-1.0'
+pkg_name = 'gstreamer-validate-1.0'
 library_def = {'lib': gstvalidate}
 pkgconfig.generate(gstvalidate,
   libraries : [gst_dep],
   subdirs : pkgconfig_subdirs,
   name : pkg_name,
-  description : 'Gstreamer Validate',
+  description : 'GStreamer Validate',
 )
 
 validate_gen_sources = []
 if build_gir
     gst_validate_gir_extra_args = gir_init_section + [ '--c-include=gst/validate/validate.h' ]
     gir = {
-            'sources' : gstvalidate_sources + gstvalidate_headers + gst_validate_enums,
+            'sources' : runner_file + gstvalidate_sources + gstvalidate_headers + gst_validate_enums,
             'nsversion' : '1.0',
             'namespace' : 'GstValidate',
             'symbol_prefix' : 'gst_validate',
@@ -119,7 +120,7 @@ if build_gir
       validate_gen_sources += [validate_gir]
     endif
 endif
-libraries += [[pkg_name, library_def]]
+gst_libraries += [[pkg_name, library_def]]
 
 validate_dep = declare_dependency(link_with : gstvalidate,
   include_directories : [inc_dirs],

@@ -218,7 +218,7 @@ struct _GstVaapiPictureH265
   GstVaapiPicture base;
   GstH265SliceHdr *last_slice_hdr;
   guint structure;
-  gint32 poc;                   // PicOrderCntVal (8.3.1) 
+  gint32 poc;                   // PicOrderCntVal (8.3.1)
   gint32 poc_lsb;               // slice_pic_order_cnt_lsb
   guint32 pic_latency_cnt;      // PicLatencyCount
   guint output_flag:1;
@@ -585,6 +585,13 @@ ensure_pps (GstVaapiDecoderH265 * decoder, GstH265PPS * pps)
   GstVaapiParserInfoH265 *const pi = priv->pps[pps->id];
 
   gst_vaapi_parser_info_h265_replace (&priv->active_pps, pi);
+
+  /* Ensure our copy is up-to-date */
+  if (pi) {
+    pi->data.pps = *pps;
+    pi->data.pps.sps = NULL;
+  }
+
   return pi ? &pi->data.pps : NULL;
 }
 
@@ -608,6 +615,10 @@ ensure_sps (GstVaapiDecoderH265 * decoder, GstH265SPS * sps)
    * sequence was not ended */
   if (pi && priv->active_sps)
     pi->state |= (priv->active_sps->state & GST_H265_VIDEO_STATE_GOT_I_FRAME);
+
+  /* Ensure our copy is up-to-date */
+  if (pi)
+    pi->data.sps = *sps;
 
   gst_vaapi_parser_info_h265_replace (&priv->active_sps, pi);
   return pi ? &pi->data.sps : NULL;
@@ -1450,13 +1461,9 @@ parse_pps (GstVaapiDecoderH265 * decoder, GstVaapiDecoderUnit * unit)
   GstVaapiParserInfoH265 *const pi = unit->parsed_info;
   GstH265PPS *const pps = &pi->data.pps;
   GstH265ParserResult result;
-  guint col_width[19], row_height[21];
 
   GST_DEBUG ("parse PPS");
   priv->parser_state &= GST_H265_VIDEO_STATE_GOT_SPS;
-
-  memset (col_width, 0, sizeof (col_width));
-  memset (row_height, 0, sizeof (row_height));
 
   memset (pps, 0, sizeof (GstH265PPS));
 
@@ -1889,10 +1896,12 @@ get_index_for_RefPicListX (VAPictureHEVC * ReferenceFrames,
 }
 
 static gboolean
-fill_picture (GstVaapiDecoderH265 * decoder, GstVaapiPictureH265 * picture)
+fill_picture (GstVaapiDecoderH265 * decoder, GstVaapiPictureH265 * picture,
+    GstVaapiParserInfoH265 * pi)
 {
   GstVaapiDecoderH265Private *const priv = &decoder->priv;
   GstVaapiPicture *const base_picture = &picture->base;
+  GstH265SliceHdr *const slice_hdr = &pi->data.slice_hdr;
   GstH265PPS *const pps = get_pps (decoder);
   GstH265SPS *const sps = get_sps (decoder);
   VAPictureParameterBufferHEVC *pic_param = base_picture->param;
@@ -2034,8 +2043,10 @@ fill_picture (GstVaapiDecoderH265 * decoder, GstVaapiPictureH265 * picture)
   pic_param->pps_tc_offset_div2 = pps->tc_offset_div2;
   COPY_FIELD (pps, num_extra_slice_header_bits);
 
-  /* FIXME: Set correct value as mentioned in va_dec_hevc.h */
-  pic_param->st_rps_bits = 0;
+  if (slice_hdr->short_term_ref_pic_set_sps_flag == 0)
+    pic_param->st_rps_bits = slice_hdr->short_term_ref_pic_set_size;
+  else
+    pic_param->st_rps_bits = 0;
 
 #if VA_CHECK_VERSION(1,2,0)
   if (pic_rext_param) {
@@ -2046,23 +2057,23 @@ fill_picture (GstVaapiDecoderH265 * decoder, GstVaapiPictureH265 * picture)
 #define COPY_REXT_BFM(a, s, f) \
 		pic_rext_param->a.bits.f = s.f
 
-    COPY_REXT_BFM (range_extension_pic_fields, sps->sps_extnsion_params,
+    COPY_REXT_BFM (range_extension_pic_fields, sps->sps_extension_params,
         transform_skip_rotation_enabled_flag);
-    COPY_REXT_BFM (range_extension_pic_fields, sps->sps_extnsion_params,
+    COPY_REXT_BFM (range_extension_pic_fields, sps->sps_extension_params,
         transform_skip_context_enabled_flag);
-    COPY_REXT_BFM (range_extension_pic_fields, sps->sps_extnsion_params,
+    COPY_REXT_BFM (range_extension_pic_fields, sps->sps_extension_params,
         implicit_rdpcm_enabled_flag);
-    COPY_REXT_BFM (range_extension_pic_fields, sps->sps_extnsion_params,
+    COPY_REXT_BFM (range_extension_pic_fields, sps->sps_extension_params,
         explicit_rdpcm_enabled_flag);
-    COPY_REXT_BFM (range_extension_pic_fields, sps->sps_extnsion_params,
+    COPY_REXT_BFM (range_extension_pic_fields, sps->sps_extension_params,
         extended_precision_processing_flag);
-    COPY_REXT_BFM (range_extension_pic_fields, sps->sps_extnsion_params,
+    COPY_REXT_BFM (range_extension_pic_fields, sps->sps_extension_params,
         intra_smoothing_disabled_flag);
-    COPY_REXT_BFM (range_extension_pic_fields, sps->sps_extnsion_params,
+    COPY_REXT_BFM (range_extension_pic_fields, sps->sps_extension_params,
         high_precision_offsets_enabled_flag);
-    COPY_REXT_BFM (range_extension_pic_fields, sps->sps_extnsion_params,
+    COPY_REXT_BFM (range_extension_pic_fields, sps->sps_extension_params,
         persistent_rice_adaptation_enabled_flag);
-    COPY_REXT_BFM (range_extension_pic_fields, sps->sps_extnsion_params,
+    COPY_REXT_BFM (range_extension_pic_fields, sps->sps_extension_params,
         cabac_bypass_alignment_enabled_flag);
 
     COPY_REXT_BFM (range_extension_pic_fields, pps->pps_extension_params,
@@ -2497,7 +2508,7 @@ decode_picture (GstVaapiDecoderH265 * decoder, GstVaapiDecoderUnit * unit)
   if (!dpb_init (decoder, picture, pi))
     return GST_VAAPI_DECODER_STATUS_ERROR_UNKNOWN;
 
-  if (!fill_picture (decoder, picture))
+  if (!fill_picture (decoder, picture, pi))
     return GST_VAAPI_DECODER_STATUS_ERROR_UNKNOWN;
 
   priv->decoder_state = pi->state;

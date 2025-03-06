@@ -170,10 +170,25 @@ gst_mxf_demux_partition_free (GstMXFDemuxPartition * partition)
 }
 
 static void
+gst_mxf_demux_essence_track_free (GstMXFDemuxEssenceTrack * t)
+{
+  if (t->offsets)
+    g_array_free (t->offsets, TRUE);
+
+  g_free (t->mapping_data);
+
+  if (t->tags)
+    gst_tag_list_unref (t->tags);
+
+  if (t->caps)
+    gst_caps_unref (t->caps);
+
+  g_free (t);
+}
+
+static void
 gst_mxf_demux_reset_mxf_state (GstMXFDemux * demux)
 {
-  guint i;
-
   GST_DEBUG_OBJECT (demux, "Resetting MXF state");
 
   g_list_foreach (demux->partitions, (GFunc) gst_mxf_demux_partition_free,
@@ -182,23 +197,7 @@ gst_mxf_demux_reset_mxf_state (GstMXFDemux * demux)
   demux->partitions = NULL;
 
   demux->current_partition = NULL;
-
-  for (i = 0; i < demux->essence_tracks->len; i++) {
-    GstMXFDemuxEssenceTrack *t =
-        &g_array_index (demux->essence_tracks, GstMXFDemuxEssenceTrack, i);
-
-    if (t->offsets)
-      g_array_free (t->offsets, TRUE);
-
-    g_free (t->mapping_data);
-
-    if (t->tags)
-      gst_tag_list_unref (t->tags);
-
-    if (t->caps)
-      gst_caps_unref (t->caps);
-  }
-  g_array_set_size (demux->essence_tracks, 0);
+  g_ptr_array_set_size (demux->essence_tracks, 0);
 }
 
 static void
@@ -216,7 +215,7 @@ gst_mxf_demux_reset_linked_metadata (GstMXFDemux * demux)
 
   for (i = 0; i < demux->essence_tracks->len; i++) {
     GstMXFDemuxEssenceTrack *track =
-        &g_array_index (demux->essence_tracks, GstMXFDemuxEssenceTrack, i);
+        g_ptr_array_index (demux->essence_tracks, i);
 
     track->source_package = NULL;
     track->delta_id = -1;
@@ -419,7 +418,7 @@ gst_mxf_demux_partition_postcheck (GstMXFDemux * demux,
 
   for (i = 0; i < demux->essence_tracks->len; i++) {
     GstMXFDemuxEssenceTrack *cand =
-        &g_array_index (demux->essence_tracks, GstMXFDemuxEssenceTrack, i);
+        g_ptr_array_index (demux->essence_tracks, i);
 
     if (cand->body_sid != partition->partition.body_sid)
       continue;
@@ -866,8 +865,7 @@ gst_mxf_demux_update_essence_tracks (GstMXFDemux * demux)
 
       for (k = 0; k < demux->essence_tracks->len; k++) {
         GstMXFDemuxEssenceTrack *tmp =
-            &g_array_index (demux->essence_tracks, GstMXFDemuxEssenceTrack,
-            k);
+            g_ptr_array_index (demux->essence_tracks, k);
 
         if (tmp->track_number == track->parent.track_number &&
             tmp->body_sid == edata->body_sid) {
@@ -885,24 +883,23 @@ gst_mxf_demux_update_essence_tracks (GstMXFDemux * demux)
       }
 
       if (!etrack) {
-        GstMXFDemuxEssenceTrack tmp;
+        GstMXFDemuxEssenceTrack *tmp = g_new0 (GstMXFDemuxEssenceTrack, 1);
 
-        memset (&tmp, 0, sizeof (tmp));
-        tmp.body_sid = edata->body_sid;
-        tmp.index_sid = edata->index_sid;
-        tmp.track_number = track->parent.track_number;
-        tmp.track_id = track->parent.track_id;
-        memcpy (&tmp.source_package_uid, &package->parent.package_uid, 32);
+        tmp->body_sid = edata->body_sid;
+        tmp->index_sid = edata->index_sid;
+        tmp->track_number = track->parent.track_number;
+        tmp->track_id = track->parent.track_id;
+        memcpy (&tmp->source_package_uid, &package->parent.package_uid, 32);
 
         if (demux->current_partition->partition.body_sid == edata->body_sid &&
             demux->current_partition->partition.body_offset == 0)
-          tmp.position = 0;
+          tmp->position = 0;
         else
-          tmp.position = -1;
+          tmp->position = -1;
 
-        g_array_append_val (demux->essence_tracks, tmp);
+        g_ptr_array_add (demux->essence_tracks, tmp);
         etrack =
-            &g_array_index (demux->essence_tracks, GstMXFDemuxEssenceTrack,
+            g_ptr_array_index (demux->essence_tracks,
             demux->essence_tracks->len - 1);
         new = TRUE;
       }
@@ -1050,13 +1047,7 @@ gst_mxf_demux_update_essence_tracks (GstMXFDemux * demux)
 
     next:
       if (new) {
-        g_free (etrack->mapping_data);
-        if (etrack->tags)
-          gst_tag_list_unref (etrack->tags);
-        if (etrack->caps)
-          gst_caps_unref (etrack->caps);
-
-        g_array_remove_index (demux->essence_tracks,
+        g_ptr_array_remove_index (demux->essence_tracks,
             demux->essence_tracks->len - 1);
       }
     }
@@ -1069,7 +1060,7 @@ gst_mxf_demux_update_essence_tracks (GstMXFDemux * demux)
 
   for (i = 0; i < demux->essence_tracks->len; i++) {
     GstMXFDemuxEssenceTrack *etrack =
-        &g_array_index (demux->essence_tracks, GstMXFDemuxEssenceTrack, i);
+        g_ptr_array_index (demux->essence_tracks, i);
 
     if (!etrack->source_package || !etrack->source_track || !etrack->caps) {
       GST_ERROR_OBJECT (demux, "Failed to update essence track %u", i);
@@ -1438,7 +1429,7 @@ gst_mxf_demux_update_tracks (GstMXFDemux * demux)
 
     for (k = 0; k < demux->essence_tracks->len; k++) {
       GstMXFDemuxEssenceTrack *tmp =
-          &g_array_index (demux->essence_tracks, GstMXFDemuxEssenceTrack, k);
+          g_ptr_array_index (demux->essence_tracks, k);
 
       if (tmp->source_package == source_package &&
           tmp->source_track == source_track) {
@@ -1927,8 +1918,7 @@ gst_mxf_demux_pad_set_component (GstMXFDemux * demux, GstMXFDemuxPad * pad,
   pad->current_essence_track = NULL;
 
   for (k = 0; k < demux->essence_tracks->len; k++) {
-    GstMXFDemuxEssenceTrack *tmp =
-        &g_array_index (demux->essence_tracks, GstMXFDemuxEssenceTrack, k);
+    GstMXFDemuxEssenceTrack *tmp = g_ptr_array_index (demux->essence_tracks, k);
 
     if (tmp->source_package == source_package &&
         tmp->source_track == source_track) {
@@ -2712,7 +2702,7 @@ gst_mxf_demux_handle_generic_container_essence_element (GstMXFDemux * demux,
   if (!etrack) {
     for (i = 0; i < demux->essence_tracks->len; i++) {
       GstMXFDemuxEssenceTrack *tmp =
-          &g_array_index (demux->essence_tracks, GstMXFDemuxEssenceTrack, i);
+          g_ptr_array_index (demux->essence_tracks, i);
 
       if (tmp->body_sid == demux->current_partition->partition.body_sid &&
           (tmp->track_number == track_number || tmp->track_number == 0)) {
@@ -3109,11 +3099,11 @@ gst_mxf_demux_handle_generic_container_essence_element (GstMXFDemux * demux,
         ret =
             gst_mxf_demux_pad_set_component (demux, pad,
             pad->current_component_index + 1);
-        if (ret != GST_FLOW_OK && ret != GST_FLOW_EOS) {
-          GST_ERROR_OBJECT (demux, "Switching component failed");
-        } else {
+        if (ret == GST_FLOW_OK) {
           pad->current_essence_track->position =
               pad->current_essence_track_position;
+        } else if (ret != GST_FLOW_EOS) {
+          GST_ERROR_OBJECT (demux, "Switching component failed");
         }
       } else if (etrack->duration > 0
           && pad->current_essence_track_position >= etrack->duration) {
@@ -3320,32 +3310,23 @@ static gint
 compare_index_table_segment (MXFIndexTableSegment * sa,
     MXFIndexTableSegment * sb)
 {
-  if (mxf_uuid_is_equal (&sa->instance_id, &sb->instance_id))
-    return 0;
   if (sa->body_sid != sb->body_sid)
     return (sa->body_sid < sb->body_sid) ? -1 : 1;
   if (sa->index_sid != sb->index_sid)
     return (sa->index_sid < sb->index_sid) ? -1 : 1;
-  /* Finally sort by index start position */
-  if (sa->index_start_position < sb->index_start_position)
-    return -1;
-  return (sa->index_start_position != sb->index_start_position);
-}
+  if (sa->index_start_position != sb->index_start_position)
+    return (sa->index_start_position < sb->index_start_position) ? -1 : 1;
 
-#if !GLIB_CHECK_VERSION(2, 62, 0)
-static gboolean
-has_table_segment (GArray * segments, MXFIndexTableSegment * target)
-{
-  guint i;
-  for (i = 0; i < segments->len; i++) {
-    MXFIndexTableSegment *cand =
-        &g_array_index (segments, MXFIndexTableSegment, i);
-    if (mxf_uuid_is_equal (&cand->instance_id, &target->instance_id))
-      return TRUE;
-  }
-  return FALSE;
+  /* If all the above are equal ... the index table segments are only equal if
+   * their instance ID are equal. Until March 2022 the FFmpeg MXF muxer would
+   * write the same instance id for the various (different) index table
+   * segments, we therefore only check instance ID *after* all the above
+   * properties to make sure they are really different. */
+  if (mxf_uuid_is_equal (&sa->instance_id, &sb->instance_id))
+    return 0;
+
+  return 1;
 }
-#endif
 
 static GstFlowReturn
 gst_mxf_demux_handle_index_table_segment (GstMXFDemux * demux, GstMXFKLV * klv)
@@ -3381,18 +3362,16 @@ gst_mxf_demux_handle_index_table_segment (GstMXFDemux * demux, GstMXFKLV * klv)
   if (g_list_find_custom (demux->pending_index_table_segments, segment,
           (GCompareFunc) compare_index_table_segment)) {
     GST_DEBUG_OBJECT (demux, "Already in pending list");
+    mxf_index_table_segment_reset (segment);
     g_free (segment);
     return GST_FLOW_OK;
   }
   for (tmp = demux->index_tables; tmp; tmp = tmp->next) {
     GstMXFDemuxIndexTable *table = (GstMXFDemuxIndexTable *) tmp->data;
-#if !GLIB_CHECK_VERSION (2, 62, 0)
-    if (has_table_segment (table->segments, segment)) {
-#else
     if (g_array_binary_search (table->segments, segment,
             (GCompareFunc) compare_index_table_segment, NULL)) {
-#endif
       GST_DEBUG_OBJECT (demux, "Already handled");
+      mxf_index_table_segment_reset (segment);
       g_free (segment);
       return GST_FLOW_OK;
     }
@@ -3927,8 +3906,7 @@ from_track_offset:
   gst_mxf_demux_set_partition_for_offset (demux, demux->offset);
 
   for (i = 0; i < demux->essence_tracks->len; i++) {
-    GstMXFDemuxEssenceTrack *t =
-        &g_array_index (demux->essence_tracks, GstMXFDemuxEssenceTrack, i);
+    GstMXFDemuxEssenceTrack *t = g_ptr_array_index (demux->essence_tracks, i);
 
     if (index_start_position != -1 && t == etrack)
       t->position = index_start_position;
@@ -3952,8 +3930,7 @@ from_track_offset:
       /* Handle EOS */
       for (i = 0; i < demux->essence_tracks->len; i++) {
         GstMXFDemuxEssenceTrack *t =
-            &g_array_index (demux->essence_tracks, GstMXFDemuxEssenceTrack,
-            i);
+            g_ptr_array_index (demux->essence_tracks, i);
 
         if (t->position > 0)
           t->duration = t->position;
@@ -4136,6 +4113,7 @@ gst_mxf_demux_pull_and_handle_klv_packet (GstMXFDemux * demux)
     /* We entered a new partition */
     if (ret == GST_FLOW_OK && mxf_is_partition_pack (&klv.key)) {
       GstMXFDemuxPartition *partition = demux->current_partition;
+      gboolean partition_done = FALSE;
 
       /* Grab footer metadata if needed */
       if (demux->pull_footer_metadata
@@ -4178,15 +4156,19 @@ gst_mxf_demux_pull_and_handle_klv_packet (GstMXFDemux * demux)
                 "Track already at another position : %" G_GINT64_FORMAT,
                 partition->single_track->position);
             if (find_edit_entry (demux, partition->single_track,
-                    partition->single_track->position, FALSE, &entry))
+                    partition->single_track->position, FALSE, &entry)) {
               lowest_offset = entry.offset;
+            } else if (partition->single_track->position >=
+                partition->single_track->duration) {
+              GST_DEBUG_OBJECT (demux, "Track fully consumed, partition done");
+              partition_done = TRUE;
+            }
           }
         } else {
           guint i;
           for (i = 0; i < demux->essence_tracks->len; i++) {
             GstMXFDemuxEssenceTrack *etrack =
-                &g_array_index (demux->essence_tracks, GstMXFDemuxEssenceTrack,
-                i);
+                g_ptr_array_index (demux->essence_tracks, i);
 
             if (etrack->body_sid != partition->partition.body_sid)
               continue;
@@ -4207,14 +4189,15 @@ gst_mxf_demux_pull_and_handle_klv_packet (GstMXFDemux * demux)
           }
         }
 
-        if (lowest_offset != G_MAXUINT64) {
+        if (partition_done || lowest_offset != G_MAXUINT64) {
           GstMXFDemuxPartition *next_partition = NULL;
           GList *cur_part = g_list_find (demux->partitions, partition);
           if (cur_part && cur_part->next)
             next_partition = (GstMXFDemuxPartition *) cur_part->next->data;
 
           /* If we have completely processed this partition, skip to next partition */
-          if (lowest_offset > next_partition->partition.this_partition) {
+          if (partition_done
+              || lowest_offset > next_partition->partition.this_partition) {
             GST_DEBUG_OBJECT (demux,
                 "Partition entirely processed, skipping to next one");
             demux->offset = next_partition->partition.this_partition;
@@ -4656,9 +4639,8 @@ gst_mxf_demux_pad_to_track_and_position (GstMXFDemux * demux,
   /* Get the corresponding essence track for the given source package and stream id */
   for (i = 0; i < demux->essence_tracks->len; i++) {
     GstMXFDemuxEssenceTrack *track =
-        &g_array_index (demux->essence_tracks, GstMXFDemuxEssenceTrack, i);
-    GST_LOG_OBJECT (pad,
-        "Looking at essence track body_sid:%d index_sid:%d",
+        g_ptr_array_index (demux->essence_tracks, i);
+    GST_LOG_OBJECT (pad, "Looking at essence track body_sid:%d index_sid:%d",
         track->body_sid, track->index_sid);
     if (clip->source_track_id == 0 || (track->track_id == clip->source_track_id
             && mxf_umid_is_equal (&clip->source_package_id,
@@ -4907,8 +4889,7 @@ gst_mxf_demux_seek_push (GstMXFDemux * demux, GstEvent * event)
   }
 
   for (i = 0; i < demux->essence_tracks->len; i++) {
-    GstMXFDemuxEssenceTrack *t =
-        &g_array_index (demux->essence_tracks, GstMXFDemuxEssenceTrack, i);
+    GstMXFDemuxEssenceTrack *t = g_ptr_array_index (demux->essence_tracks, i);
     t->position = -1;
   }
 
@@ -5346,8 +5327,7 @@ gst_mxf_demux_seek_pull (GstMXFDemux * demux, GstEvent * event)
   }
 
   for (i = 0; i < demux->essence_tracks->len; i++) {
-    GstMXFDemuxEssenceTrack *t =
-        &g_array_index (demux->essence_tracks, GstMXFDemuxEssenceTrack, i);
+    GstMXFDemuxEssenceTrack *t = g_ptr_array_index (demux->essence_tracks, i);
     t->position = -1;
   }
 
@@ -5646,7 +5626,7 @@ gst_mxf_demux_sink_event (GstPad * pad, GstObject * parent, GstEvent * event)
 
       for (i = 0; i < demux->essence_tracks->len; i++) {
         GstMXFDemuxEssenceTrack *t =
-            &g_array_index (demux->essence_tracks, GstMXFDemuxEssenceTrack, i);
+            g_ptr_array_index (demux->essence_tracks, i);
 
         if (t->position > 0)
           t->duration = t->position;
@@ -5687,8 +5667,7 @@ gst_mxf_demux_sink_event (GstPad * pad, GstObject * parent, GstEvent * event)
 
           for (i = 0; i < demux->essence_tracks->len; i++) {
             GstMXFDemuxEssenceTrack *etrack =
-                &g_array_index (demux->essence_tracks, GstMXFDemuxEssenceTrack,
-                i);
+                g_ptr_array_index (demux->essence_tracks, i);
             etrack->position = -1;
           }
           ret = TRUE;
@@ -5712,8 +5691,7 @@ gst_mxf_demux_sink_event (GstPad * pad, GstObject * parent, GstEvent * event)
 
       for (i = 0; i < demux->essence_tracks->len; i++) {
         GstMXFDemuxEssenceTrack *t =
-            &g_array_index (demux->essence_tracks, GstMXFDemuxEssenceTrack,
-            i);
+            g_ptr_array_index (demux->essence_tracks, i);
         t->position = -1;
       }
       demux->current_partition = NULL;
@@ -5986,7 +5964,7 @@ gst_mxf_demux_finalize (GObject * object)
 
   g_ptr_array_free (demux->src, TRUE);
   demux->src = NULL;
-  g_array_free (demux->essence_tracks, TRUE);
+  g_ptr_array_free (demux->essence_tracks, TRUE);
   demux->essence_tracks = NULL;
 
   g_hash_table_destroy (demux->metadata);
@@ -6063,8 +6041,8 @@ gst_mxf_demux_init (GstMXFDemux * demux)
   g_rw_lock_init (&demux->metadata_lock);
 
   demux->src = g_ptr_array_new ();
-  demux->essence_tracks =
-      g_array_new (FALSE, FALSE, sizeof (GstMXFDemuxEssenceTrack));
+  demux->essence_tracks = g_ptr_array_new_with_free_func ((GDestroyNotify)
+      gst_mxf_demux_essence_track_free);
 
   gst_segment_init (&demux->segment, GST_FORMAT_TIME);
 

@@ -17,6 +17,20 @@
  * Boston, MA 02110-1301, USA.
  */
 
+/**
+ * SECTION:element-qsvh264enc
+ * @title: qsvh264enc
+ *
+ * Intel Quick Sync H.264 encoder
+ *
+ * ## Example launch line
+ * ```
+ * gst-launch-1.0 videotestsrc ! qsvh264enc ! h264parse ! matroskamux ! filesink location=out.mkv
+ * ```
+ *
+ * Since: 1.22
+ */
+
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
@@ -32,10 +46,10 @@
 #ifdef G_OS_WIN32
 #include <gst/d3d11/gstd3d11.h>
 #else
-#include <gst/va/gstvadisplay_drm.h>
+#include <gst/va/gstva.h>
 #endif
 
-GST_DEBUG_CATEGORY_EXTERN (gst_qsv_h264_enc_debug);
+GST_DEBUG_CATEGORY_STATIC (gst_qsv_h264_enc_debug);
 #define GST_CAT_DEFAULT gst_qsv_h264_enc_debug
 
 typedef enum
@@ -45,16 +59,38 @@ typedef enum
   GST_QSV_H264_ENC_SEI_DISABLED,
 } GstQsvH264EncSeiInsertMode;
 
+/**
+ * GstQsvH264EncSeiInsertMode:
+ *
+ * Since: 1.22
+ */
 #define GST_TYPE_QSV_H264_ENC_SEI_INSERT_MODE (gst_qsv_h264_enc_sei_insert_mode_get_type ())
 static GType
 gst_qsv_h264_enc_sei_insert_mode_get_type (void)
 {
   static GType sei_insert_mode_type = 0;
   static const GEnumValue insert_modes[] = {
+    /**
+     * GstQsvH264EncSeiInsertMode::insert:
+     *
+     * Since: 1.22
+     */
     {GST_QSV_H264_ENC_SEI_INSERT, "Insert SEI", "insert"},
+
+    /**
+     * GstQsvH264EncSeiInsertMode::insert-and-drop:
+     *
+     * Since: 1.22
+     */
     {GST_QSV_H264_ENC_SEI_INSERT_AND_DROP,
           "Insert SEI and remove corresponding meta from output buffer",
         "insert-and-drop"},
+
+    /**
+     * GstQsvH264EncSeiInsertMode::disabled:
+     *
+     * Since: 1.22
+     */
     {GST_QSV_H264_ENC_SEI_DISABLED, "Disable SEI insertion", "disabled"},
     {0, nullptr, nullptr}
   };
@@ -68,22 +104,86 @@ gst_qsv_h264_enc_sei_insert_mode_get_type (void)
   return sei_insert_mode_type;
 }
 
+/**
+ * GstQsvH264EncRateControl:
+ *
+ * Since: 1.22
+ */
 #define GST_TYPE_QSV_H264_ENC_RATE_CONTROL (gst_qsv_h264_enc_rate_control_get_type ())
 static GType
 gst_qsv_h264_enc_rate_control_get_type (void)
 {
   static GType rate_control_type = 0;
   static const GEnumValue rate_controls[] = {
+    /**
+     * GstQsvH264EncRateControl::cbr:
+     *
+     * Since: 1.22
+     */
     {MFX_RATECONTROL_CBR, "Constant Bitrate", "cbr"},
+
+    /**
+     * GstQsvH264EncRateControl::vbr:
+     *
+     * Since: 1.22
+     */
     {MFX_RATECONTROL_VBR, "Variable Bitrate", "vbr"},
+
+    /**
+     * GstQsvH264EncRateControl::cqp:
+     *
+     * Since: 1.22
+     */
     {MFX_RATECONTROL_CQP, "Constant Quantizer", "cqp"},
-    {MFX_RATECONTROL_AVBR, "Average Bitrate", "avbr"},
-    {MFX_RATECONTROL_LA, "VBR with look ahead (Non HRD compliant)", "la_vbr"},
+
+    /**
+     * GstQsvH264EncRateControl::avbr:
+     *
+     * Since: 1.22
+     */
+    {MFX_RATECONTROL_AVBR, "Average Variable Bitrate", "avbr"},
+
+    /**
+     * GstQsvH264EncRateControl::la-vbr:
+     *
+     * Since: 1.22
+     */
+    {MFX_RATECONTROL_LA, "VBR with look ahead (Non HRD compliant)", "la-vbr"},
+
+    /**
+     * GstQsvH264EncRateControl::icq:
+     *
+     * Since: 1.22
+     */
     {MFX_RATECONTROL_ICQ, "Intelligent CQP", "icq"},
+
+    /**
+     * GstQsvH264EncRateControl::vcm:
+     *
+     * Since: 1.22
+     */
     {MFX_RATECONTROL_VCM, "Video Conferencing Mode (Non HRD compliant)", "vcm"},
+
+    /**
+     * GstQsvH264EncRateControl::la-icq:
+     *
+     * Since: 1.22
+     */
     {MFX_RATECONTROL_LA_ICQ, "Intelligent CQP with LA (Non HRD compliant)",
-        "la_icq"},
-    {MFX_RATECONTROL_LA_HRD, "HRD compliant LA", "la_hrd"},
+        "la-icq"},
+
+    /**
+     * GstQsvH264EncRateControl::la-hrd:
+     *
+     * Since: 1.22
+     */
+    {MFX_RATECONTROL_LA_HRD, "HRD compliant LA", "la-hrd"},
+
+    /**
+     * GstQsvH264EncRateControl::qvbr:
+     *
+     * Since: 1.22
+     */
     {MFX_RATECONTROL_QVBR, "VBR with CQP", "qvbr"},
     {0, nullptr, nullptr}
   };
@@ -97,16 +197,44 @@ gst_qsv_h264_enc_rate_control_get_type (void)
   return rate_control_type;
 }
 
+/**
+ * GstQsvH264EncRCLookAheadDS:
+ *
+ * Since: 1.22
+ */
 #define GST_TYPE_QSV_H264_ENC_RC_LOOKAHEAD_DS (gst_qsv_h264_enc_rc_lookahead_ds_get_type ())
 static GType
 gst_qsv_h264_enc_rc_lookahead_ds_get_type (void)
 {
   static GType rc_lookahead_ds_type = 0;
   static const GEnumValue rc_lookahead_ds[] = {
+    /**
+     * GstQsvH264EncRCLookAheadDS::unknown
+     *
+     * Since: 1.22
+     */
     {MFX_LOOKAHEAD_DS_UNKNOWN, "Unknown", "unknown"},
+
+    /**
+     * GstQsvH264EncRCLookAheadDS::off
+     *
+     * Since: 1.22
+     */
     {MFX_LOOKAHEAD_DS_OFF, "Do not use down sampling", "off"},
+
+    /**
+     * GstQsvH264EncRCLookAheadDS::2x
+     *
+     * Since: 1.22
+     */
     {MFX_LOOKAHEAD_DS_2x,
         "Down sample frames two times before estimation", "2x"},
+
+    /**
+     * GstQsvH264EncRCLookAheadDS::4x
+     *
+     * Since: 1.22
+     */
     {MFX_LOOKAHEAD_DS_4x,
         "Down sample frames four times before estimation", "4x"},
     {0, nullptr, nullptr}
@@ -124,8 +252,6 @@ gst_qsv_h264_enc_rc_lookahead_ds_get_type (void)
 enum
 {
   PROP_0,
-  PROP_ADAPTER_LUID,
-  PROP_DEVICE_PATH,
   PROP_CABAC,
   PROP_MIN_QP_I,
   PROP_MIN_QP_P,
@@ -137,7 +263,7 @@ enum
   PROP_QP_P,
   PROP_QP_B,
   PROP_GOP_SIZE,
-  PROP_I_FRAMES,
+  PROP_IDR_INTERVAL,
   PROP_B_FRAMES,
   PROP_REF_FRAMES,
   PROP_BITRATE,
@@ -149,25 +275,42 @@ enum
   PROP_AVBR_CONVERGENCE,
   PROP_ICQ_QUALITY,
   PROP_QVBR_QUALITY,
+  PROP_DISABLE_HRD_CONFORMANCE,
   PROP_CC_INSERT,
 };
 
 #define DEFAULT_CABAC MFX_CODINGOPTION_UNKNOWN
 #define DEFAULT_QP 0
-#define DEFAULT_GOP_SIZE 0
-#define DEFAULT_I_FRAMES 0
+#define DEFAULT_GOP_SIZE 30
+#define DEFAULT_IDR_INTERVAL 0
 #define DEFAULT_B_FRAMES 0
 #define DEFAULT_REF_FRAMES 2
 #define DEFAULT_BITRATE 2000
 #define DEFAULT_MAX_BITRATE 0
-#define DEFAULT_RATE_CONTROL MFX_RATECONTROL_CBR
+#define DEFAULT_RATE_CONTROL MFX_RATECONTROL_VBR
 #define DEFAULT_RC_LOOKAHEAD 10
 #define DEFAULT_RC_LOOKAHEAD_DS MFX_LOOKAHEAD_DS_UNKNOWN
 #define DEFAULT_AVBR_ACCURACY 0
 #define DEFAULT_AVBR_CONVERGENCE 0
 #define DEFAULT_IQC_QUALITY 0
 #define DEFAULT_QVBR_QUALITY 0
+#define DEFAULT_DISABLE_HRD_CONFORMANCE FALSE
 #define DEFAULT_CC_INSERT GST_QSV_H264_ENC_SEI_INSERT
+
+#define DOC_SINK_CAPS_COMM \
+    "format = (string) NV12, " \
+    "width = (int) [ 16, 8192 ], height = (int) [ 16, 8192 ]"
+
+#define DOC_SINK_CAPS \
+    "video/x-raw(memory:D3D11Memory), " DOC_SINK_CAPS_COMM "; " \
+    "video/x-raw(memory:VAMemory), " DOC_SINK_CAPS_COMM "; " \
+    "video/x-raw, " DOC_SINK_CAPS_COMM
+
+#define DOC_SRC_CAPS \
+    "video/x-h264, width = (int) [ 16, 8192 ], height = (int) [ 16, 8192 ], " \
+    "stream-format = (string) { avc, byte-stream }, alignment = (string) au, " \
+    "profile = (string) { high, main, constrained-baseline, " \
+    "progressive-high, constrained-high, baseline }"
 
 typedef struct _GstQsvH264EncClassData
 {
@@ -176,6 +319,7 @@ typedef struct _GstQsvH264EncClassData
   guint impl_index;
   gint64 adapter_luid;
   gchar *display_path;
+  gchar *description;
 } GstQsvH264EncClassData;
 
 typedef struct _GstQsvH264Enc
@@ -209,7 +353,7 @@ typedef struct _GstQsvH264Enc
   guint qp_p;
   guint qp_b;
   guint gop_size;
-  guint iframes;
+  guint idr_interval;
   guint bframes;
   guint ref_frames;
   guint bitrate;
@@ -221,6 +365,7 @@ typedef struct _GstQsvH264Enc
   guint avbr_convergence;
   guint icq_quality;
   guint qvbr_quality;
+  gboolean disable_hrd_conformance;
   GstQsvH264EncSeiInsertMode cc_insert;
 } GstQsvH264Enc;
 
@@ -257,8 +402,8 @@ static gboolean gst_qsv_h264_enc_attach_payload (GstQsvEncoder * encoder,
 static GstBuffer *gst_qsv_h264_enc_create_output_buffer (GstQsvEncoder *
     encoder, mfxBitstream * bitstream);
 static GstQsvEncoderReconfigure
-gst_qsv_h264_enc_check_reconfigure (GstQsvEncoder * encoder,
-    mfxVideoParam * param);
+gst_qsv_h264_enc_check_reconfigure (GstQsvEncoder * encoder, mfxSession session,
+    mfxVideoParam * param, GPtrArray * extra_params);
 
 static void
 gst_qsv_h264_enc_class_init (GstQsvH264EncClass * klass, gpointer data)
@@ -268,96 +413,83 @@ gst_qsv_h264_enc_class_init (GstQsvH264EncClass * klass, gpointer data)
   GstVideoEncoderClass *encoder_class = GST_VIDEO_ENCODER_CLASS (klass);
   GstQsvEncoderClass *qsvenc_class = GST_QSV_ENCODER_CLASS (klass);
   GstQsvH264EncClassData *cdata = (GstQsvH264EncClassData *) data;
+  GstPadTemplate *pad_templ;
+  GstCaps *doc_caps;
 
   qsvenc_class->codec_id = MFX_CODEC_AVC;
   qsvenc_class->impl_index = cdata->impl_index;
   qsvenc_class->adapter_luid = cdata->adapter_luid;
-  if (cdata->display_path)
-    strcpy (qsvenc_class->display_path, cdata->display_path);
+  qsvenc_class->display_path = cdata->display_path;
 
   object_class->finalize = gst_qsv_h264_enc_finalize;
   object_class->set_property = gst_qsv_h264_enc_set_property;
   object_class->get_property = gst_qsv_h264_enc_get_property;
-
-#ifdef G_OS_WIN32
-  g_object_class_install_property (object_class, PROP_ADAPTER_LUID,
-      g_param_spec_int64 ("adapter-luid", "Adapter LUID",
-          "DXGI Adapter LUID (Locally Unique Identifier) of created device",
-          G_MININT64, G_MAXINT64, qsvenc_class->adapter_luid,
-          (GParamFlags) (GST_PARAM_CONDITIONALLY_AVAILABLE | G_PARAM_READABLE |
-              G_PARAM_STATIC_STRINGS)));
-#else
-  g_object_class_install_property (object_class, PROP_DEVICE_PATH,
-      g_param_spec_string ("device-path", "Device Path",
-          "DRM device path", cdata->display_path,
-          (GParamFlags) (GST_PARAM_CONDITIONALLY_AVAILABLE |
-              G_PARAM_READABLE | G_PARAM_STATIC_STRINGS)));
-#endif
 
   g_object_class_install_property (object_class, PROP_CABAC,
       g_param_spec_enum ("cabac", "Cabac", "Enables CABAC entropy coding",
           GST_TYPE_QSV_CODING_OPTION, DEFAULT_CABAC,
           (GParamFlags) (G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
   g_object_class_install_property (object_class, PROP_MIN_QP_I,
-      g_param_spec_uint ("min-qpi", "Min QP I",
-          "Minimum allowed QP value for I-frame types (0: no limitations)",
+      g_param_spec_uint ("min-qp-i", "Min QP I",
+          "Minimum allowed QP value for I-frame types (0: default)",
           0, 51, DEFAULT_QP, (GParamFlags)
           (G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
   g_object_class_install_property (object_class, PROP_MIN_QP_P,
-      g_param_spec_uint ("min-qpp", "Min QP P",
-          "Minimum allowed QP value for P-frame types (0: no limitations)",
+      g_param_spec_uint ("min-qp-p", "Min QP P",
+          "Minimum allowed QP value for P-frame types (0: default)",
           0, 51, DEFAULT_QP, (GParamFlags)
           (G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
   g_object_class_install_property (object_class, PROP_MIN_QP_B,
-      g_param_spec_uint ("min-qpb", "Min QP B",
-          "Minimum allowed QP value for B-frame types (0: no limitations)",
+      g_param_spec_uint ("min-qp-b", "Min QP B",
+          "Minimum allowed QP value for B-frame types (0: default)",
           0, 51, DEFAULT_QP, (GParamFlags)
           (G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
   g_object_class_install_property (object_class, PROP_MAX_QP_I,
-      g_param_spec_uint ("max-qpi", "Max QP I",
-          "Maximum allowed QP value for I-frame types (0: no limitations)",
+      g_param_spec_uint ("max-qp-i", "Max QP I",
+          "Maximum allowed QP value for I-frame types (0: default)",
           0, 51, DEFAULT_QP, (GParamFlags)
           (G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
   g_object_class_install_property (object_class, PROP_MAX_QP_P,
-      g_param_spec_uint ("max-qpp", "Max QP P",
-          "Maximum allowed QP value for P-frame types (0: no limitations)",
+      g_param_spec_uint ("max-qp-p", "Max QP P",
+          "Maximum allowed QP value for P-frame types (0: default)",
           0, 51, DEFAULT_QP, (GParamFlags)
           (G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
   g_object_class_install_property (object_class, PROP_MAX_QP_B,
-      g_param_spec_uint ("max-qpb", "Max QP B",
-          "Maximum allowed QP value for B-frame types (0: no limitations)",
+      g_param_spec_uint ("max-qp-b", "Max QP B",
+          "Maximum allowed QP value for B-frame types (0: default)",
           0, 51, DEFAULT_QP, (GParamFlags)
           (G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
   g_object_class_install_property (object_class, PROP_QP_I,
-      g_param_spec_uint ("qpi", "QP I",
-          "Constant quantizer for I frames (0: no limitations)",
+      g_param_spec_uint ("qp-i", "QP I",
+          "Constant quantizer for I frames (0: default)",
           0, 51, DEFAULT_QP, (GParamFlags)
           (G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
   g_object_class_install_property (object_class, PROP_QP_P,
-      g_param_spec_uint ("qpp", "QP P",
-          "Constant quantizer for P frames (0: no limitations)",
+      g_param_spec_uint ("qp-p", "QP P",
+          "Constant quantizer for P frames (0: default)",
           0, 51, DEFAULT_QP, (GParamFlags)
           (G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
   g_object_class_install_property (object_class, PROP_QP_B,
-      g_param_spec_uint ("qpb", "QP B",
-          "Constant quantizer for B frames (0: no limitations)",
+      g_param_spec_uint ("qp-b", "QP B",
+          "Constant quantizer for B frames (0: default)",
           0, 51, DEFAULT_QP, (GParamFlags)
           (G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
   g_object_class_install_property (object_class, PROP_GOP_SIZE,
       g_param_spec_uint ("gop-size", "GOP Size",
           "Number of pictures within a GOP (0: unspecified)",
-          0, G_MAXINT, DEFAULT_GOP_SIZE, (GParamFlags)
+          0, G_MAXUSHORT, DEFAULT_GOP_SIZE, (GParamFlags)
           (G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
-  g_object_class_install_property (object_class, PROP_I_FRAMES,
-      g_param_spec_uint ("i-frames", "I Frames",
-          "Number of I frames between IDR frames"
-          "(0: every I frame is an IDR frame)",
-          0, G_MAXINT, DEFAULT_I_FRAMES, (GParamFlags)
+  g_object_class_install_property (object_class, PROP_IDR_INTERVAL,
+      g_param_spec_uint ("idr-interval", "IDR interval",
+          "IDR-frame interval in terms of I-frames. "
+          "0: every I-frame is an IDR frame, "
+          "N: \"N\" I-frames are inserted between IDR-frames",
+          0, G_MAXUSHORT, DEFAULT_IDR_INTERVAL, (GParamFlags)
           (G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
   g_object_class_install_property (object_class, PROP_B_FRAMES,
       g_param_spec_uint ("b-frames", "B Frames",
           "Number of B frames between I and P frames",
-          0, G_MAXINT, DEFAULT_B_FRAMES, (GParamFlags)
+          0, G_MAXUSHORT, DEFAULT_B_FRAMES, (GParamFlags)
           (G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
   g_object_class_install_property (object_class, PROP_REF_FRAMES,
       g_param_spec_uint ("ref-frames", "Reference Frames",
@@ -405,7 +537,7 @@ gst_qsv_h264_enc_class_init (GstQsvH264EncClass * klass, gpointer data)
           (G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
   g_object_class_install_property (object_class, PROP_ICQ_QUALITY,
       g_param_spec_uint ("icq-quality", "ICQ Quality",
-          "Intelligent Constant Quality (0: default)",
+          "Intelligent Constant Quality for \"icq\" rate-control (0: default)",
           0, 51, DEFAULT_IQC_QUALITY, (GParamFlags)
           (G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
   g_object_class_install_property (object_class, PROP_QVBR_QUALITY,
@@ -413,27 +545,49 @@ gst_qsv_h264_enc_class_init (GstQsvH264EncClass * klass, gpointer data)
           "Quality level used for \"qvbr\" rate-control mode (0: default)",
           0, 51, DEFAULT_QVBR_QUALITY, (GParamFlags)
           (G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+  g_object_class_install_property (object_class, PROP_DISABLE_HRD_CONFORMANCE,
+      g_param_spec_boolean ("disable-hrd-conformance",
+          "Disable HRD Conformance", "Allow NAL HRD non-conformant stream",
+          DEFAULT_DISABLE_HRD_CONFORMANCE,
+          (GParamFlags) (G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
   g_object_class_install_property (object_class, PROP_CC_INSERT,
-      g_param_spec_enum ("cc-insert",
-          "Closed Caption Insert",
+      g_param_spec_enum ("cc-insert", "Closed Caption Insert",
           "Closed Caption Insert mode. "
           "Only CEA-708 RAW format is supported for now",
           GST_TYPE_QSV_H264_ENC_SEI_INSERT_MODE, DEFAULT_CC_INSERT,
           (GParamFlags) (G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
 
   parent_class = (GstElementClass *) g_type_class_peek_parent (klass);
+
+#ifdef G_OS_WIN32
+  std::string long_name = "Intel Quick Sync Video " +
+      std::string (cdata->description) + " H.264 Encoder";
+
+  gst_element_class_set_metadata (element_class, long_name.c_str (),
+      "Codec/Encoder/Video/Hardware",
+      "Intel Quick Sync Video H.264 Encoder",
+      "Seungha Yang <seungha@centricular.com>");
+#else
   gst_element_class_set_static_metadata (element_class,
       "Intel Quick Sync Video H.264 Encoder",
       "Codec/Encoder/Video/Hardware",
       "Intel Quick Sync Video H.264 Encoder",
       "Seungha Yang <seungha@centricular.com>");
+#endif
 
-  gst_element_class_add_pad_template (element_class,
-      gst_pad_template_new ("sink", GST_PAD_SINK, GST_PAD_ALWAYS,
-          cdata->sink_caps));
-  gst_element_class_add_pad_template (element_class,
-      gst_pad_template_new ("src", GST_PAD_SRC, GST_PAD_ALWAYS,
-          cdata->src_caps));
+  pad_templ = gst_pad_template_new ("sink",
+      GST_PAD_SINK, GST_PAD_ALWAYS, cdata->sink_caps);
+  doc_caps = gst_caps_from_string (DOC_SINK_CAPS);
+  gst_pad_template_set_documentation_caps (pad_templ, doc_caps);
+  gst_caps_unref (doc_caps);
+  gst_element_class_add_pad_template (element_class, pad_templ);
+
+  pad_templ = gst_pad_template_new ("src",
+      GST_PAD_SRC, GST_PAD_ALWAYS, cdata->src_caps);
+  doc_caps = gst_caps_from_string (DOC_SRC_CAPS);
+  gst_pad_template_set_documentation_caps (pad_templ, doc_caps);
+  gst_caps_unref (doc_caps);
+  gst_element_class_add_pad_template (element_class, pad_templ);
 
   encoder_class->start = GST_DEBUG_FUNCPTR (gst_qsv_h264_enc_start);
   encoder_class->transform_meta =
@@ -450,9 +604,16 @@ gst_qsv_h264_enc_class_init (GstQsvH264EncClass * klass, gpointer data)
   qsvenc_class->check_reconfigure =
       GST_DEBUG_FUNCPTR (gst_qsv_h264_enc_check_reconfigure);
 
+  gst_type_mark_as_plugin_api (GST_TYPE_QSV_H264_ENC_SEI_INSERT_MODE,
+      (GstPluginAPIFlags) 0);
+  gst_type_mark_as_plugin_api (GST_TYPE_QSV_H264_ENC_RATE_CONTROL,
+      (GstPluginAPIFlags) 0);
+  gst_type_mark_as_plugin_api (GST_TYPE_QSV_H264_ENC_RC_LOOKAHEAD_DS,
+      (GstPluginAPIFlags) 0);
+
   gst_caps_unref (cdata->sink_caps);
   gst_caps_unref (cdata->src_caps);
-  g_free (cdata->display_path);
+  g_free (cdata->description);
   g_free (cdata);
 }
 
@@ -470,7 +631,7 @@ gst_qsv_h264_enc_init (GstQsvH264Enc * self)
   self->qp_p = DEFAULT_QP;
   self->qp_b = DEFAULT_QP;
   self->gop_size = DEFAULT_GOP_SIZE;
-  self->iframes = DEFAULT_I_FRAMES;
+  self->idr_interval = DEFAULT_IDR_INTERVAL;
   self->bframes = DEFAULT_B_FRAMES;
   self->ref_frames = DEFAULT_REF_FRAMES;
   self->bitrate = DEFAULT_BITRATE;
@@ -482,6 +643,7 @@ gst_qsv_h264_enc_init (GstQsvH264Enc * self)
   self->avbr_convergence = DEFAULT_AVBR_CONVERGENCE;
   self->icq_quality = DEFAULT_IQC_QUALITY;
   self->qvbr_quality = DEFAULT_QVBR_QUALITY;
+  self->disable_hrd_conformance = DEFAULT_DISABLE_HRD_CONFORMANCE;
   self->cc_insert = DEFAULT_CC_INSERT;
 
   g_mutex_init (&self->prop_lock);
@@ -525,6 +687,19 @@ gst_qsv_h264_enc_check_update_enum (GstQsvH264Enc * self, mfxU16 * old_val,
 
   g_mutex_lock (&self->prop_lock);
   *old_val = (mfxU16) new_val;
+  self->property_updated = TRUE;
+  g_mutex_unlock (&self->prop_lock);
+}
+
+static void
+gst_qsv_h264_enc_check_update_boolean (GstQsvH264Enc * self, gboolean * old_val,
+    gboolean new_val)
+{
+  if (*old_val == new_val)
+    return;
+
+  g_mutex_lock (&self->prop_lock);
+  *old_val = new_val;
   self->property_updated = TRUE;
   g_mutex_unlock (&self->prop_lock);
 }
@@ -581,8 +756,8 @@ gst_qsv_h264_enc_set_property (GObject * object, guint prop_id,
       gst_qsv_h264_enc_check_update_uint (self, &self->gop_size,
           g_value_get_uint (value), FALSE);
       break;
-    case PROP_I_FRAMES:
-      gst_qsv_h264_enc_check_update_uint (self, &self->iframes,
+    case PROP_IDR_INTERVAL:
+      gst_qsv_h264_enc_check_update_uint (self, &self->idr_interval,
           g_value_get_uint (value), FALSE);
       break;
     case PROP_B_FRAMES:
@@ -629,6 +804,10 @@ gst_qsv_h264_enc_set_property (GObject * object, guint prop_id,
       gst_qsv_h264_enc_check_update_uint (self, &self->qvbr_quality,
           g_value_get_uint (value), FALSE);
       break;
+    case PROP_DISABLE_HRD_CONFORMANCE:
+      gst_qsv_h264_enc_check_update_boolean (self,
+          &self->disable_hrd_conformance, g_value_get_boolean (value));
+      break;
     case PROP_CC_INSERT:
       /* This property is unrelated to encoder-reset */
       self->cc_insert = (GstQsvH264EncSeiInsertMode) g_value_get_enum (value);
@@ -644,15 +823,8 @@ gst_qsv_h264_enc_get_property (GObject * object, guint prop_id, GValue * value,
     GParamSpec * pspec)
 {
   GstQsvH264Enc *self = GST_QSV_H264_ENC (object);
-  GstQsvEncoderClass *klass = GST_QSV_ENCODER_GET_CLASS (self);
 
   switch (prop_id) {
-    case PROP_ADAPTER_LUID:
-      g_value_set_int64 (value, klass->adapter_luid);
-      break;
-    case PROP_DEVICE_PATH:
-      g_value_set_string (value, klass->display_path);
-      break;
     case PROP_CABAC:
       g_value_set_enum (value, self->cabac);
       break;
@@ -686,8 +858,8 @@ gst_qsv_h264_enc_get_property (GObject * object, guint prop_id, GValue * value,
     case PROP_GOP_SIZE:
       g_value_set_uint (value, self->gop_size);
       break;
-    case PROP_I_FRAMES:
-      g_value_set_uint (value, self->iframes);
+    case PROP_IDR_INTERVAL:
+      g_value_set_uint (value, self->idr_interval);
       break;
     case PROP_B_FRAMES:
       g_value_set_uint (value, self->bframes);
@@ -724,6 +896,9 @@ gst_qsv_h264_enc_get_property (GObject * object, guint prop_id, GValue * value,
       break;
     case PROP_CC_INSERT:
       g_value_set_enum (value, self->cc_insert);
+      break;
+    case PROP_DISABLE_HRD_CONFORMANCE:
+      g_value_set_boolean (value, self->disable_hrd_conformance);
       break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -815,7 +990,6 @@ gst_qsv_h264_enc_getcaps (GstVideoEncoder * encoder, GstCaps * filter)
         downstream_profiles.insert (profile);
     }
   }
-  gst_clear_caps (&allowed_caps);
 
   GST_DEBUG_OBJECT (self, "Downstream specified %" G_GSIZE_FORMAT " profiles",
       downstream_profiles.size ());
@@ -826,8 +1000,12 @@ gst_qsv_h264_enc_getcaps (GstVideoEncoder * encoder, GstCaps * filter)
     GST_WARNING_OBJECT (self,
         "Allowed caps holds no profile field %" GST_PTR_FORMAT, allowed_caps);
 
+    gst_clear_caps (&allowed_caps);
+
     return gst_video_encoder_proxy_getcaps (encoder, nullptr, filter);
   }
+
+  gst_clear_caps (&allowed_caps);
 
   /* Profile allows interlaced? */
   /* *INDENT-OFF* */
@@ -919,6 +1097,62 @@ gst_qsv_h264_enc_init_extra_params (GstQsvH264Enc * self)
 
   self->option3.Header.BufferId = MFX_EXTBUFF_CODING_OPTION3;
   self->option3.Header.BufferSz = sizeof (mfxExtCodingOption3);
+}
+
+static void
+gst_qsv_h264_enc_set_bitrate (GstQsvH264Enc * self, mfxVideoParam * param)
+{
+  guint max_val;
+  guint multiplier;
+
+  switch (param->mfx.RateControlMethod) {
+    case MFX_RATECONTROL_CBR:
+      multiplier = (self->bitrate + 0x10000) / 0x10000;
+      param->mfx.TargetKbps = param->mfx.MaxKbps = self->bitrate / multiplier;
+      param->mfx.BRCParamMultiplier = (mfxU16) multiplier;
+      break;
+    case MFX_RATECONTROL_VBR:
+    case MFX_RATECONTROL_VCM:
+    case MFX_RATECONTROL_QVBR:
+      max_val = MAX (self->bitrate, self->max_bitrate);
+      multiplier = (max_val + 0x10000) / 0x10000;
+      param->mfx.TargetKbps = self->bitrate / multiplier;
+      param->mfx.MaxKbps = self->max_bitrate / multiplier;
+      param->mfx.BRCParamMultiplier = (mfxU16) multiplier;
+      break;
+    case MFX_RATECONTROL_CQP:
+      param->mfx.QPI = self->qp_i;
+      param->mfx.QPP = self->qp_p;
+      param->mfx.QPB = self->qp_b;
+      break;
+    case MFX_RATECONTROL_AVBR:
+      multiplier = (self->bitrate + 0x10000) / 0x10000;
+      param->mfx.TargetKbps = self->bitrate / multiplier;
+      param->mfx.Accuracy = self->avbr_accuracy;
+      param->mfx.Convergence = self->avbr_convergence;
+      param->mfx.BRCParamMultiplier = (mfxU16) multiplier;
+      break;
+    case MFX_RATECONTROL_LA:
+      multiplier = (self->bitrate + 0x10000) / 0x10000;
+      param->mfx.TargetKbps = self->bitrate / multiplier;
+      param->mfx.BRCParamMultiplier = (mfxU16) multiplier;
+      break;
+    case MFX_RATECONTROL_LA_HRD:
+      max_val = MAX (self->bitrate, self->max_bitrate);
+      multiplier = (max_val + 0x10000) / 0x10000;
+      param->mfx.TargetKbps = self->bitrate / multiplier;
+      param->mfx.MaxKbps = self->max_bitrate / multiplier;
+      param->mfx.BRCParamMultiplier = (mfxU16) multiplier;
+      break;
+    case MFX_RATECONTROL_ICQ:
+    case MFX_RATECONTROL_LA_ICQ:
+      param->mfx.ICQQuality = self->icq_quality;
+      break;
+    default:
+      GST_WARNING_OBJECT (self,
+          "Unhandled rate-control method %d", self->rate_control);
+      break;
+  }
 }
 
 static gboolean
@@ -1142,52 +1376,11 @@ gst_qsv_h264_enc_set_format (GstQsvEncoder * encoder,
   param->mfx.CodecProfile = mfx_profile;
   param->mfx.GopRefDist = bframes + 1;
   param->mfx.GopPicSize = self->gop_size;
-  param->mfx.IdrInterval = self->iframes;
+  param->mfx.IdrInterval = self->idr_interval;
   param->mfx.RateControlMethod = self->rate_control;
   param->mfx.NumRefFrame = self->ref_frames;
 
-  /* Calculate multiplier to avoid uint16 overflow */
-  guint max_val = MAX (self->bitrate, self->max_bitrate);
-  guint multiplier = (max_val + 0x10000) / 0x10000;
-
-  switch (param->mfx.RateControlMethod) {
-    case MFX_RATECONTROL_CBR:
-    case MFX_RATECONTROL_VBR:
-    case MFX_RATECONTROL_VCM:
-    case MFX_RATECONTROL_QVBR:
-      param->mfx.TargetKbps = self->bitrate / multiplier;
-      param->mfx.MaxKbps = self->max_bitrate / multiplier;
-      param->mfx.BRCParamMultiplier = (mfxU16) multiplier;
-      break;
-    case MFX_RATECONTROL_CQP:
-      param->mfx.QPI = self->qp_i;
-      param->mfx.QPP = self->qp_p;
-      param->mfx.QPB = self->qp_b;
-      break;
-    case MFX_RATECONTROL_AVBR:
-      param->mfx.TargetKbps = self->bitrate;
-      param->mfx.Accuracy = self->avbr_accuracy;
-      param->mfx.Convergence = self->avbr_convergence;
-      param->mfx.BRCParamMultiplier = (mfxU16) multiplier;
-      break;
-    case MFX_RATECONTROL_LA:
-      param->mfx.TargetKbps = self->bitrate;
-      param->mfx.BRCParamMultiplier = (mfxU16) multiplier;
-      break;
-    case MFX_RATECONTROL_LA_HRD:
-      param->mfx.TargetKbps = self->bitrate;
-      param->mfx.MaxKbps = self->max_bitrate;
-      param->mfx.BRCParamMultiplier = (mfxU16) multiplier;
-      break;
-    case MFX_RATECONTROL_ICQ:
-    case MFX_RATECONTROL_LA_ICQ:
-      param->mfx.ICQQuality = self->icq_quality;
-      break;
-    default:
-      GST_WARNING_OBJECT (self,
-          "Unhandled rate-control method %d", self->rate_control);
-      break;
-  }
+  gst_qsv_h264_enc_set_bitrate (self, param);
 
   /* Write signal info only when upstream caps contains valid colorimetry,
    * because derived default colorimetry in gst_video_info_from_caps() tends to
@@ -1224,6 +1417,11 @@ gst_qsv_h264_enc_set_format (GstQsvEncoder * encoder,
 
   /* TODO: property ? */
   option->AUDelimiter = MFX_CODINGOPTION_ON;
+
+  if (self->disable_hrd_conformance) {
+    option->NalHrdConformance = MFX_CODINGOPTION_OFF;
+    option->VuiVclHrdParameters = MFX_CODINGOPTION_OFF;
+  }
 
   /* Enables PicTiming SEI by default */
   option->PicTimingSEI = MFX_CODINGOPTION_ON;
@@ -1347,7 +1545,7 @@ gst_qsv_h264_enc_set_output_state (GstQsvEncoder * encoder,
       return FALSE;
     }
 
-    data = sps_nalu.data + sps_nalu.offset;
+    data = sps_nalu.data + sps_nalu.offset + sps_nalu.header_bytes;
     profile_idc = data[0];
     profile_comp = data[1];
     level_idc = data[2];
@@ -1592,41 +1790,57 @@ gst_qsv_h264_enc_create_output_buffer (GstQsvEncoder * encoder,
 }
 
 static GstQsvEncoderReconfigure
-gst_qsv_h264_enc_check_reconfigure (GstQsvEncoder * encoder,
-    mfxVideoParam * param)
+gst_qsv_h264_enc_check_reconfigure (GstQsvEncoder * encoder, mfxSession session,
+    mfxVideoParam * param, GPtrArray * extra_params)
 {
   GstQsvH264Enc *self = GST_QSV_H264_ENC (encoder);
+  GstQsvEncoderReconfigure ret = GST_QSV_ENCODER_RECONFIGURE_NONE;
 
   g_mutex_lock (&self->prop_lock);
-
   if (self->property_updated) {
-    g_mutex_unlock (&self->prop_lock);
-    return GST_QSV_ENCODER_RECONFIGURE_FULL;
+    ret = GST_QSV_ENCODER_RECONFIGURE_FULL;
+    goto done;
   }
 
   if (self->bitrate_updated) {
-    /* Update @param with updated bitrate values so that baseclass can
-     * call MFXVideoENCODE_Query() with updated values */
-    param->mfx.TargetKbps = self->bitrate;
-    param->mfx.MaxKbps = self->max_bitrate;
-    param->mfx.QPI = self->qp_i;
-    param->mfx.QPP = self->qp_p;
-    param->mfx.QPB = self->qp_b;
-    g_mutex_unlock (&self->prop_lock);
+    mfxStatus status;
+    mfxExtEncoderResetOption reset_opt;
+    reset_opt.Header.BufferId = MFX_EXTBUFF_ENCODER_RESET_OPTION;
+    reset_opt.Header.BufferSz = sizeof (mfxExtEncoderResetOption);
+    reset_opt.StartNewSequence = MFX_CODINGOPTION_UNKNOWN;
 
-    return GST_QSV_ENCODER_RECONFIGURE_BITRATE;
+    gst_qsv_h264_enc_set_bitrate (self, param);
+
+    g_ptr_array_add (extra_params, &reset_opt);
+    param->ExtParam = (mfxExtBuffer **) extra_params->pdata;
+    param->NumExtParam = extra_params->len;
+
+    status = MFXVideoENCODE_Query (session, param, param);
+    g_ptr_array_remove_index (extra_params, extra_params->len - 1);
+    param->NumExtParam = extra_params->len;
+
+    if (status != MFX_ERR_NONE) {
+      GST_WARNING_OBJECT (self, "MFXVideoENCODE_Query returned %d (%s)",
+          QSV_STATUS_ARGS (status));
+      ret = GST_QSV_ENCODER_RECONFIGURE_FULL;
+    } else {
+      if (reset_opt.StartNewSequence == MFX_CODINGOPTION_OFF) {
+        GST_DEBUG_OBJECT (self, "Can update without new sequence");
+        ret = GST_QSV_ENCODER_RECONFIGURE_BITRATE;
+      } else {
+        GST_DEBUG_OBJECT (self, "Need new sequence");
+        ret = GST_QSV_ENCODER_RECONFIGURE_FULL;
+      }
+    }
   }
 
+done:
+  self->property_updated = FALSE;
+  self->bitrate_updated = FALSE;
   g_mutex_unlock (&self->prop_lock);
 
-  return GST_QSV_ENCODER_RECONFIGURE_NONE;
+  return ret;
 }
-
-typedef struct
-{
-  guint width;
-  guint height;
-} Resolution;
 
 void
 gst_qsv_h264_enc_register (GstPlugin * plugin, guint rank, guint impl_index,
@@ -1635,16 +1849,15 @@ gst_qsv_h264_enc_register (GstPlugin * plugin, guint rank, guint impl_index,
   mfxStatus status;
   mfxVideoParam param;
   mfxInfoMFX *mfx;
-  static const Resolution resolutions_to_check[] = {
-    {1280, 720}, {1920, 1088}, {2560, 1440}, {3840, 2160}, {4096, 2160},
-    {7680, 4320}, {8192, 4320}
-  };
   std::vector < mfxU16 > supported_profiles;
-  Resolution max_resolution;
+  GstQsvResolution max_resolution;
   bool supports_interlaced = false;
 
+  GST_DEBUG_CATEGORY_INIT (gst_qsv_h264_enc_debug,
+      "qsvh264enc", 0, "qsvh264enc");
+
   memset (&param, 0, sizeof (mfxVideoParam));
-  memset (&max_resolution, 0, sizeof (Resolution));
+  memset (&max_resolution, 0, sizeof (GstQsvResolution));
 
   param.AsyncDepth = 4;
   param.IOPattern = MFX_IOPATTERN_IN_VIDEO_MEMORY;
@@ -1684,17 +1897,17 @@ gst_qsv_h264_enc_register (GstPlugin * plugin, guint rank, guint impl_index,
   mfx->CodecProfile = supported_profiles[0];
 
   /* Check max-resolution */
-  for (guint i = 0; i < G_N_ELEMENTS (resolutions_to_check); i++) {
-    mfx->FrameInfo.Width = GST_ROUND_UP_16 (resolutions_to_check[i].width);
-    mfx->FrameInfo.Height = GST_ROUND_UP_16 (resolutions_to_check[i].height);
-    mfx->FrameInfo.CropW = resolutions_to_check[i].width;
-    mfx->FrameInfo.CropH = resolutions_to_check[i].height;
+  for (guint i = 0; i < G_N_ELEMENTS (gst_qsv_resolutions); i++) {
+    mfx->FrameInfo.Width = GST_ROUND_UP_16 (gst_qsv_resolutions[i].width);
+    mfx->FrameInfo.Height = GST_ROUND_UP_16 (gst_qsv_resolutions[i].height);
+    mfx->FrameInfo.CropW = gst_qsv_resolutions[i].width;
+    mfx->FrameInfo.CropH = gst_qsv_resolutions[i].height;
 
     if (MFXVideoENCODE_Query (session, &param, &param) != MFX_ERR_NONE)
       break;
 
-    max_resolution.width = resolutions_to_check[i].width;
-    max_resolution.height = resolutions_to_check[i].height;
+    max_resolution.width = gst_qsv_resolutions[i].width;
+    max_resolution.height = gst_qsv_resolutions[i].height;
   }
 
   GST_INFO ("Maximum supported resolution: %dx%d",
@@ -1758,6 +1971,13 @@ gst_qsv_h264_enc_register (GstPlugin * plugin, guint rank, guint impl_index,
   gst_caps_set_features_simple (d3d11_caps, caps_features);
   gst_caps_append (d3d11_caps, sink_caps);
   sink_caps = d3d11_caps;
+#else
+  GstCaps *va_caps = gst_caps_copy (sink_caps);
+  GstCapsFeatures *caps_features =
+      gst_caps_features_new (GST_CAPS_FEATURE_MEMORY_VA, nullptr);
+  gst_caps_set_features_simple (va_caps, caps_features);
+  gst_caps_append (va_caps, sink_caps);
+  sink_caps = va_caps;
 #endif
 
   std::string src_caps_str = "video/x-h264";
@@ -1796,13 +2016,10 @@ gst_qsv_h264_enc_register (GstPlugin * plugin, guint rank, guint impl_index,
   cdata->impl_index = impl_index;
 
 #ifdef G_OS_WIN32
-  gint64 device_luid;
-  g_object_get (device, "adapter-luid", &device_luid, nullptr);
-  cdata->adapter_luid = device_luid;
+  g_object_get (device, "adapter-luid", &cdata->adapter_luid,
+      "description", &cdata->description, nullptr);
 #else
-  gchar *display_path;
-  g_object_get (device, "path", &display_path, nullptr);
-  cdata->display_path = display_path;
+  g_object_get (device, "path", &cdata->display_path, nullptr);
 #endif
 
   GType type;
@@ -1837,6 +2054,9 @@ gst_qsv_h264_enc_register (GstPlugin * plugin, guint rank, guint impl_index,
 
   if (rank > 0 && index != 0)
     rank--;
+
+  if (index != 0)
+    gst_element_type_set_skip_documentation (type);
 
   if (!gst_element_register (plugin, feature_name, rank, type))
     GST_WARNING ("Failed to register plugin '%s'", type_name);

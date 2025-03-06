@@ -177,7 +177,7 @@ gst_mikey_payload_kemac_get_n_sub (const GstMIKEYPayload * payload)
  * Get the sub payload of @payload at @idx. @payload should be of type
  * %GST_MIKEY_PT_KEMAC.
  *
- * Returns: (transfer none): the #GstMIKEYPayload at @idx.
+ * Returns: (transfer none) (nullable): the #GstMIKEYPayload at @idx.
  *
  * Since: 1.4
  */
@@ -458,7 +458,7 @@ gst_mikey_payload_sp_get_n_params (const GstMIKEYPayload * payload)
  * Get the Security Policy parameter in a %GST_MIKEY_PT_SP @payload
  * at @idx.
  *
- * Returns: the #GstMIKEYPayloadSPParam at @idx in @payload
+ * Returns: (transfer none) (nullable): the #GstMIKEYPayloadSPParam at @idx in @payload
  *
  * Since: 1.4
  */
@@ -683,7 +683,7 @@ gst_mikey_payload_key_data_set_spi (GstMIKEYPayload * payload,
  * gst_mikey_payload_key_data_set_interval:
  * @payload: a #GstMIKEYPayload
  * @vf_len: the length of @vf_data
- * @vf_data: (array length=vf_data): the Valid From data
+ * @vf_data: (array length=vf_len): the Valid From data
  * @vt_len: the length of @vt_data
  * @vt_data: (array length=vt_len): the Valid To data
  *
@@ -763,7 +763,7 @@ mikey_payload_free (GstMIKEYPayload * payload)
  *
  * Make a new #GstMIKEYPayload with @type.
  *
- * Returns: (nullable): a new #GstMIKEYPayload or %NULL on failure.
+ * Returns: (transfer full) (nullable): a new #GstMIKEYPayload or %NULL on failure.
  *
  * Since: 1.4
  */
@@ -870,7 +870,7 @@ mikey_message_free (GstMIKEYMessage * msg)
  *
  * Make a new MIKEY message.
  *
- * Returns: a new #GstMIKEYMessage on success
+ * Returns: (transfer full): a new #GstMIKEYMessage on success
  *
  * Since: 1.4
  */
@@ -899,7 +899,7 @@ gst_mikey_message_new (void)
  *
  * Make a new #GstMIKEYMessage from @bytes.
  *
- * Returns: a new #GstMIKEYMessage
+ * Returns: (transfer full): a new #GstMIKEYMessage
  *
  * Since: 1.4
  */
@@ -974,7 +974,7 @@ gst_mikey_message_get_n_cs (const GstMIKEYMessage * msg)
  *
  * Get the policy information of @msg at @idx.
  *
- * Returns: a #GstMIKEYMapSRTP
+ * Returns: (transfer none) (nullable): a #GstMIKEYMapSRTP
  *
  * Since: 1.4
  */
@@ -1125,7 +1125,7 @@ gst_mikey_message_get_n_payloads (const GstMIKEYMessage * msg)
  *
  * Get the #GstMIKEYPayload at @idx in @msg
  *
- * Returns: (transfer none): the #GstMIKEYPayload at @idx. The payload
+ * Returns: (transfer none) (nullable): the #GstMIKEYPayload at @idx. The payload
  * remains valid for as long as it is part of @msg.
  *
  * Since: 1.4
@@ -1149,7 +1149,7 @@ gst_mikey_message_get_payload (const GstMIKEYMessage * msg, guint idx)
  *
  * Find the @nth occurrence of the payload with @type in @msg.
  *
- * Returns: the @nth #GstMIKEYPayload of @type.
+ * Returns: (transfer none) (nullable): the @nth #GstMIKEYPayload of @type.
  *
  * Since: 1.4
  */
@@ -1667,7 +1667,7 @@ payloads_to_bytes (GArray * payloads, GByteArray * arr, guint8 ** ptr,
  *
  * Convert @msg to a #GBytes.
  *
- * Returns: a new #GBytes for @msg.
+ * Returns: (transfer full): a new #GBytes for @msg.
  *
  * Since: 1.4
  */
@@ -2053,7 +2053,7 @@ invalid_data:
  * Parse @size bytes from @data into a #GstMIKEYMessage. @info contains the
  * parameters to decrypt and verify the data.
  *
- * Returns: a #GstMIKEYMessage on success or %NULL when parsing failed and
+ * Returns: (transfer full): a #GstMIKEYMessage on success or %NULL when parsing failed and
  * @error will be set.
  *
  * Since: 1.4
@@ -2238,7 +2238,7 @@ auth_key_length_from_auth_cipher_name (const gchar * auth, const gchar * cipher,
  *  - Key Data Transport Payload
  *  - Key Data Sub-Payload
  *
- * Returns: (transfer full): a #GstMIKEYMessage,
+ * Returns: (transfer full) (nullable): a #GstMIKEYMessage,
  * or %NULL if there is no srtp information in the caps.
  *
  * Since: 1.8
@@ -2377,6 +2377,7 @@ gboolean
 gst_mikey_message_to_caps (const GstMIKEYMessage * msg, GstCaps * caps)
 {
   gboolean res = FALSE;
+  const GstMIKEYMapSRTP *srtp;
   const GstMIKEYPayload *payload;
   const gchar *srtp_cipher;
   const gchar *srtp_auth;
@@ -2384,8 +2385,16 @@ gst_mikey_message_to_caps (const GstMIKEYMessage * msg, GstCaps * caps)
   srtp_cipher = "aes-128-icm";
   srtp_auth = "hmac-sha1-80";
 
-  /* check the Security policy if any */
-  if ((payload = gst_mikey_message_find_payload (msg, GST_MIKEY_PT_SP, 0))) {
+  /* Look for first crypto session */
+  if (!(srtp = gst_mikey_message_get_cs_srtp (msg, 0))) {
+    GST_ERROR ("No crypto session found at index 0");
+    goto done;
+  }
+
+  /* Look for crypto policy corresponding to first crypto session */
+  if ((payload =
+          gst_mikey_message_find_payload (msg, GST_MIKEY_PT_SP,
+              (unsigned int) srtp->policy))) {
     GstMIKEYPayloadSP *p = (GstMIKEYPayloadSP *) payload;
     guint len, i;
     guint enc_alg = GST_MIKEY_ENC_NULL;
@@ -2478,7 +2487,7 @@ gst_mikey_message_to_caps (const GstMIKEYMessage * msg, GstCaps * caps)
     GstMIKEYPayloadKEMAC *p = (GstMIKEYPayloadKEMAC *) payload;
     const GstMIKEYPayload *sub;
     GstMIKEYPayloadKeyData *pkd;
-    GstBuffer *buf;
+    GstBuffer *buf, *saltbuf;
 
     if (p->enc_alg != GST_MIKEY_ENC_NULL || p->mac_alg != GST_MIKEY_MAC_NULL)
       goto done;
@@ -2491,8 +2500,15 @@ gst_mikey_message_to_caps (const GstMIKEYMessage * msg, GstCaps * caps)
 
     pkd = (GstMIKEYPayloadKeyData *) sub;
     buf = gst_buffer_new_memdup (pkd->key_data, pkd->key_len);
+    if (pkd->salt_len) {
+      saltbuf = gst_buffer_new_memdup (pkd->salt_data, pkd->salt_len);
+      gst_buffer_append (buf, saltbuf);
+      gst_buffer_unref (saltbuf);
+    }
     gst_caps_set_simple (caps, "srtp-key", GST_TYPE_BUFFER, buf, NULL);
     gst_buffer_unref (buf);
+
+    gst_caps_set_simple (caps, "roc", G_TYPE_UINT, srtp->roc, NULL);
   }
 
   gst_caps_set_simple (caps,

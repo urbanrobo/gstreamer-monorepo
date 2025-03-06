@@ -134,6 +134,9 @@ struct _GstV4l2Object {
   /* the video-device's file descriptor */
   gint video_fd;
   GstV4l2IOMode mode;
+  GstPoll *poll;
+  GstPollFD pollfd;
+  gboolean can_poll_device;
 
   gboolean active;
 
@@ -143,6 +146,7 @@ struct _GstV4l2Object {
   GstVideoInfo info;
   GstVideoAlignment align;
   GstVideoTransferFunction transfer;
+  gsize plane_size[GST_VIDEO_MAX_PLANES];
 
   /* Features */
   gboolean need_video_meta;
@@ -286,9 +290,6 @@ GstCaps*     gst_v4l2_object_get_raw_caps (void);
 
 GstCaps*     gst_v4l2_object_get_codec_caps (void);
 
-gint         gst_v4l2_object_extrapolate_stride (const GstVideoFormatInfo * finfo,
-                                                  gint plane, gint stride);
-
 gboolean     gst_v4l2_object_set_format  (GstV4l2Object * v4l2object, GstCaps * caps, GstV4l2Error * error);
 gboolean     gst_v4l2_object_try_format  (GstV4l2Object * v4l2object, GstCaps * caps, GstV4l2Error * error);
 gboolean     gst_v4l2_object_try_import  (GstV4l2Object * v4l2object, GstBuffer * buffer);
@@ -307,13 +308,25 @@ GstCaps *    gst_v4l2_object_get_caps    (GstV4l2Object * v4l2object, GstCaps * 
 
 gboolean     gst_v4l2_object_acquire_format (GstV4l2Object * v4l2object, GstVideoInfo * info);
 
-gboolean     gst_v4l2_object_set_crop    (GstV4l2Object * obj);
+gboolean     gst_v4l2_object_setup_padding (GstV4l2Object * obj);
 
 gboolean     gst_v4l2_object_decide_allocation (GstV4l2Object * v4l2object, GstQuery * query);
 
 gboolean     gst_v4l2_object_propose_allocation (GstV4l2Object * obj, GstQuery * query);
 
+GstBufferPool * gst_v4l2_object_get_buffer_pool (GstV4l2Object * v4l2object);
+
 GstStructure * gst_v4l2_object_v4l2fourcc_to_structure (guint32 fourcc);
+
+GstFlowReturn  gst_v4l2_object_poll (GstV4l2Object * v4l2object, GstClockTime timeout);
+gboolean       gst_v4l2_object_subscribe_event (GstV4l2Object * v4l2object, guint32 event);
+
+gboolean     gst_v4l2_object_is_raw (GstV4l2Object * obj);
+
+/* crop / compose */
+gboolean     gst_v4l2_object_set_crop (GstV4l2Object * obj, struct v4l2_rect *result);
+gboolean     gst_v4l2_object_get_crop_bounds (GstV4l2Object * obj, struct v4l2_rect *bounds);
+gboolean     gst_v4l2_object_get_crop_default (GstV4l2Object * obj, struct v4l2_rect *bounds);
 
 /* TODO Move to proper namespace */
 /* open/close the device */

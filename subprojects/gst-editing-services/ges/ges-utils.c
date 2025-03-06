@@ -44,8 +44,7 @@ static GstElementFactory *compositor_factory = NULL;
  * Creates a new timeline containing a single #GESAudioTrack and a
  * single #GESVideoTrack.
  *
- * Returns: (transfer floating): The new timeline, or %NULL if the tracks
- * could not be created and added.
+ * Returns: (transfer floating): The new timeline.
  */
 
 GESTimeline *
@@ -154,8 +153,7 @@ find_compositor (GstPluginFeature * feature, gpointer udata)
     return FALSE;
   }
 
-  /* Some hardware compositor elements (d3d11compositor for example) consist of
-   * bin with internal mixer elements */
+  /* glvideomixer consists of bin with internal mixer element */
   if (g_type_is_a (gst_element_factory_get_element_type (GST_ELEMENT_FACTORY
               (loaded_feature)), GST_TYPE_BIN)) {
     GParamSpec *pspec;

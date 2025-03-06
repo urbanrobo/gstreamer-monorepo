@@ -20,6 +20,8 @@
  *  Boston, MA 02110-1301 USA
  */
 
+#include "config.h"
+
 #include "sysdeps.h"
 #include "gstvaapicompat.h"
 #include "gstvaapifilter.h"
@@ -786,10 +788,12 @@ get_operations_ordered (GstVaapiFilter * filter, GPtrArray * default_ops)
         filter_caps = vpp_get_filter_caps (filter, va_type,
             op_data->va_cap_size, &num_filter_caps);
         if (!filter_caps)
-          goto error;
+          continue;
       }
+
       if (!op_data_ensure_caps (op_data, filter_caps, num_filter_caps))
-        goto error;
+        continue;
+
       g_ptr_array_add (ops, op_data_ref (op_data));
     }
     free (filter_caps);
@@ -1841,6 +1845,10 @@ gst_vaapi_filter_process (GstVaapiFilter * filter,
 /**
  * gst_vaapi_filter_get_formats:
  * @filter: a #GstVaapiFilter
+ * @min_width: the min width can be supported.
+ * @min_height: the min height can be supported.
+ * @max_width: the max width can be supported.
+ * @max_height: the max height can be supported.
  *
  * Determines the set of supported source or target formats for video
  * processing.  The caller owns an extra reference to the resulting
@@ -1850,12 +1858,31 @@ gst_vaapi_filter_process (GstVaapiFilter * filter,
  * Return value: the set of supported target formats for video processing.
  */
 GArray *
-gst_vaapi_filter_get_formats (GstVaapiFilter * filter)
+gst_vaapi_filter_get_formats (GstVaapiFilter * filter, gint * min_width,
+    gint * min_height, gint * max_width, gint * max_height)
 {
+  GstVaapiConfigSurfaceAttributes *attribs;
+
   g_return_val_if_fail (filter != NULL, NULL);
 
   if (!ensure_attributes (filter))
     return NULL;
+
+  attribs = filter->attribs;
+
+  if (attribs->min_width >= attribs->max_width ||
+      attribs->min_height >= attribs->max_height)
+    return NULL;
+
+  if (min_width)
+    *min_width = attribs->min_width;
+  if (min_height)
+    *min_height = attribs->min_height;
+  if (max_width)
+    *max_width = attribs->max_width;
+  if (max_height)
+    *max_height = attribs->max_height;
+
   if (filter->attribs->formats)
     return g_array_ref (filter->attribs->formats);
   return NULL;

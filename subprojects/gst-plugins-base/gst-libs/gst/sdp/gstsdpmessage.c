@@ -263,7 +263,7 @@ gst_sdp_message_new_from_text (const gchar * text, GstSDPMessage ** msg)
 
 /**
  * gst_sdp_message_init:
- * @msg: a #GstSDPMessage
+ * @msg: (out caller-allocates): a #GstSDPMessage
  *
  * Initialize @msg so that its contents are as if it was freshly allocated
  * with gst_sdp_message_new(). This function is mostly used to initialize a message
@@ -340,16 +340,12 @@ gst_sdp_message_uninit (GstSDPMessage * msg)
 GstSDPResult
 gst_sdp_message_copy (const GstSDPMessage * msg, GstSDPMessage ** copy)
 {
-  GstSDPResult ret;
   GstSDPMessage *cp;
   guint i, len;
 
-  if (msg == NULL)
-    return GST_SDP_EINVAL;
+  g_return_val_if_fail (msg != NULL, GST_SDP_EINVAL);
 
-  ret = gst_sdp_message_new (copy);
-  if (ret != GST_SDP_OK)
-    return ret;
+  gst_sdp_message_new (copy);
 
   cp = *copy;
 
@@ -489,7 +485,7 @@ gst_sdp_address_is_multicast (const gchar * nettype, const gchar * addrtype,
  *
  * Convert the contents of @msg to a text string.
  *
- * Returns: A dynamically allocated string representing the SDP description.
+ * Returns: (transfer full): A dynamically allocated string representing the SDP description.
  */
 gchar *
 gst_sdp_message_as_text (const GstSDPMessage * msg)
@@ -624,7 +620,7 @@ hex_to_int (gchar c)
 /**
  * gst_sdp_message_parse_uri:
  * @uri: the start of the uri
- * @msg: the result #GstSDPMessage
+ * @msg: (transfer none): the result #GstSDPMessage
  *
  * Parse the null-terminated @uri and store the result in @msg.
  *
@@ -736,7 +732,7 @@ static const gchar hex[16] = "0123456789ABCDEF";
  *
  *  Where each value is url encoded.
  *
- * Returns: a uri for @msg.
+ * Returns: (transfer full): a uri for @msg.
  */
 gchar *
 gst_sdp_message_as_uri (const gchar * scheme, const GstSDPMessage * msg)
@@ -1631,7 +1627,7 @@ DEFINE_ARRAY_GETTER (attribute, attributes, GstSDPAttribute);
  *
  * Get the @nth attribute with key @key in @msg.
  *
- * Returns: the attribute value of the @nth attribute with @key.
+ * Returns: (nullable): the attribute value of the @nth attribute with @key.
  */
 const gchar *
 gst_sdp_message_get_attribute_val_n (const GstSDPMessage * msg,
@@ -1663,7 +1659,7 @@ gst_sdp_message_get_attribute_val_n (const GstSDPMessage * msg,
  *
  * Get the first attribute with key @key in @msg.
  *
- * Returns: the attribute value of the first attribute with @key.
+ * Returns: (nullable): the attribute value of the first attribute with @key.
  */
 const gchar *
 gst_sdp_message_get_attribute_val (const GstSDPMessage * msg, const gchar * key)
@@ -1820,7 +1816,7 @@ gst_sdp_media_new (GstSDPMedia ** media)
 
 /**
  * gst_sdp_media_init:
- * @media: a #GstSDPMedia
+ * @media: (out caller-allocates): a #GstSDPMedia
  *
  * Initialize @media so that its contents are as if it was freshly allocated
  * with gst_sdp_media_new(). This function is mostly used to initialize a media
@@ -1910,16 +1906,12 @@ gst_sdp_media_free (GstSDPMedia * media)
 GstSDPResult
 gst_sdp_media_copy (const GstSDPMedia * media, GstSDPMedia ** copy)
 {
-  GstSDPResult ret;
   GstSDPMedia *cp;
   guint i, len;
 
-  if (media == NULL)
-    return GST_SDP_EINVAL;
+  g_return_val_if_fail (media != NULL, GST_SDP_EINVAL);
 
-  ret = gst_sdp_media_new (copy);
-  if (ret != GST_SDP_OK)
-    return ret;
+  gst_sdp_media_new (copy);
 
   cp = *copy;
 
@@ -1966,7 +1958,7 @@ gst_sdp_media_copy (const GstSDPMedia * media, GstSDPMedia ** copy)
  *
  * Convert the contents of @media to a text string.
  *
- * Returns: A dynamically allocated string representing the media.
+ * Returns: (transfer full): A dynamically allocated string representing the media.
  */
 gchar *
 gst_sdp_media_as_text (const GstSDPMedia * media)
@@ -2803,7 +2795,7 @@ gst_sdp_media_get_attribute (const GstSDPMedia * media, guint idx)
  *
  * Get the @nth attribute value for @key in @media.
  *
- * Returns: the @nth attribute value.
+ * Returns: (nullable): the @nth attribute value.
  */
 const gchar *
 gst_sdp_media_get_attribute_val_n (const GstSDPMedia * media, const gchar * key,
@@ -2835,7 +2827,7 @@ gst_sdp_media_get_attribute_val_n (const GstSDPMedia * media, const gchar * key,
  *
  * Get the first attribute value for @key in @media.
  *
- * Returns: the first attribute value for @key.
+ * Returns: (nullable): the first attribute value for @key.
  */
 const gchar *
 gst_sdp_media_get_attribute_val (const GstSDPMedia * media, const gchar * key)
@@ -3129,7 +3121,7 @@ gst_sdp_parse_line (SDPContext * c, gchar type, gchar * buffer)
  * gst_sdp_message_parse_buffer:
  * @data: (array length=size): the start of the buffer
  * @size: the size of the buffer
- * @msg: the result #GstSDPMessage
+ * @msg: (transfer none): the result #GstSDPMessage
  *
  * Parse the contents of @size bytes pointed to by @data and store the result in
  * @msg.
@@ -3447,7 +3439,7 @@ gst_sdp_parse_rtpmap (const gchar * rtpmap, gint * payload, gchar ** name,
     *params = NULL;
     goto out;
   } else {
-    *name = strdup (*name);
+    *name = g_strdup (*name);
   }
 
   t = p;
@@ -3583,9 +3575,9 @@ gst_sdp_media_caps_adjust_h264 (GstCaps * caps)
  *
  * a=fmtp:(payload) (param)[=(value)];...
  *
- * Note that the extmap attribute is set only by gst_sdp_media_attributes_to_caps().
+ * Note that the extmap, ssrc and rid attributes are set only by gst_sdp_media_attributes_to_caps().
  *
- * Returns: a #GstCaps, or %NULL if an error happened
+ * Returns: (transfer full) (nullable): a #GstCaps, or %NULL if an error happened
  *
  * Since: 1.8
  */
@@ -3622,7 +3614,9 @@ gst_sdp_media_get_caps_from_media (const GstSDPMedia * media, gint pt)
 
   /* check if we have a rate, if not, we need to look up the rate from the
    * default rates based on the payload types. */
-  if (rate == -1) {
+  /* Some broken RTSP server puts a rate of 0, also use the default in that
+   * case */
+  if (rate <= 0) {
     const GstRTPPayloadInfo *info;
 
     if (GST_RTP_PAYLOAD_IS_DYNAMIC (pt)) {
@@ -3774,7 +3768,7 @@ no_rate:
 /**
  * gst_sdp_media_set_media_from_caps:
  * @caps: a #GstCaps
- * @media: a #GstSDPMedia
+ * @media: (out caller-allocates): a #GstSDPMedia
  *
  * Mapping of caps to SDP fields:
  *
@@ -3814,15 +3808,25 @@ gst_sdp_media_set_media_from_caps (const GstCaps * caps, GstSDPMedia * media)
 
   /* get media type and payload for the m= line */
   caps_str = gst_structure_get_string (s, "media");
+  if (!caps_str) {
+    GST_ERROR ("ignoring stream without media type");
+    goto error;
+  }
   gst_sdp_media_set_media (media, caps_str);
 
-  gst_structure_get_int (s, "payload", &caps_pt);
+  if (!gst_structure_get_int (s, "payload", &caps_pt)) {
+    GST_ERROR ("ignoring stream without payload type");
+    goto error;
+  }
   tmp = g_strdup_printf ("%d", caps_pt);
   gst_sdp_media_add_format (media, tmp);
   g_free (tmp);
 
   /* get clock-rate, media type and params for the rtpmap attribute */
-  gst_structure_get_int (s, "clock-rate", &caps_rate);
+  if (!gst_structure_get_int (s, "clock-rate", &caps_rate)) {
+    GST_ERROR ("ignoring stream without clock rate");
+    goto error;
+  }
   caps_enc = gst_structure_get_string (s, "encoding-name");
   caps_params = gst_structure_get_string (s, "encoding-params");
 
@@ -3910,6 +3914,8 @@ gst_sdp_media_set_media_from_caps (const GstCaps * caps, GstSDPMedia * media)
       continue;
     if (g_str_has_prefix (fname, "rtcp-fb-"))
       continue;
+    if (g_str_has_prefix (fname, "ssrc-"))
+      continue;
 
     if (!strcmp (fname, "a-framesize")) {
       /* a-framesize attribute */
@@ -3987,6 +3993,52 @@ gst_sdp_media_set_media_from_caps (const GstCaps * caps, GstSDPMedia * media)
           gst_sdp_media_add_attribute (media, "extmap", extmap);
           g_free (extmap);
         }
+      }
+      continue;
+    }
+
+    /* rid values */
+    if (g_str_has_prefix (fname, "rid-")) {
+      const char *rid_id = &fname[strlen ("rid-")];
+      const GValue *arr;
+
+      if (!rid_id || !*rid_id)
+        continue;
+
+      if ((fval = gst_structure_get_string (s, fname))) {
+        char *rid_val = g_strdup_printf ("%s %s", rid_id, fval);
+        gst_sdp_media_add_attribute (media, "rid", rid_val);
+        g_free (rid_val);
+      } else if ((arr = gst_structure_get_value (s, fname))
+          && GST_VALUE_HOLDS_ARRAY (arr)
+          && gst_value_array_get_size (arr) > 1) {
+        const gchar *direction, *param;
+        GString *str;
+        guint i, n;
+
+        str = g_string_new (NULL);
+
+        g_string_append_printf (str, "%s ", rid_id);
+
+        n = gst_value_array_get_size (arr);
+        for (i = 0; i < n; i++) {
+          const GValue *val = gst_value_array_get_value (arr, i);
+          if (i == 0) {
+            direction = g_value_get_string (val);
+            g_string_append_printf (str, "%s", direction);
+          } else {
+            param = g_value_get_string (val);
+            if (i == 1)
+              g_string_append_c (str, ' ');
+            else
+              g_string_append_c (str, ';');
+            g_string_append_printf (str, "%s", param);
+          }
+        }
+        gst_sdp_media_add_attribute (media, "rid", str->str);
+        g_string_free (str, TRUE);
+      } else {
+        GST_WARNING ("caps field %s is an unsupported format", fname);
       }
       continue;
     }
@@ -4170,6 +4222,10 @@ sdp_add_attributes_to_caps (GArray * attributes, GstCaps * caps)
         continue;
       if (!strcmp (key, "extmap"))
         continue;
+      if (!strcmp (key, "ssrc"))
+        continue;
+      if (!strcmp (key, "rid"))
+        continue;
 
       /* string must be valid UTF8 */
       if (!g_utf8_validate (attr->value, -1, NULL))
@@ -4295,6 +4351,205 @@ gst_sdp_media_add_extmap_attributes (GArray * attributes, GstCaps * caps)
   return GST_SDP_OK;
 }
 
+/* parses Source-specific media SDP attributes (RFC5576) into caps */
+static GstSDPResult
+gst_sdp_media_add_ssrc_attributes (GArray * attributes, GstCaps * caps)
+{
+  gchar *p, *tmp, *to_free;
+  guint i;
+  GstStructure *s;
+
+  g_return_val_if_fail (attributes != NULL, GST_SDP_EINVAL);
+  g_return_val_if_fail (caps != NULL && GST_IS_CAPS (caps), GST_SDP_EINVAL);
+
+  s = gst_caps_get_structure (caps, 0);
+
+  for (i = 0; i < attributes->len; i++) {
+    const gchar *value;
+    GstSDPAttribute *attr;
+    guint32 ssrc;
+    gchar *ssrc_val, *ssrc_attr;
+    gchar *key;
+
+    attr = &g_array_index (attributes, GstSDPAttribute, i);
+    if (strcmp (attr->key, "ssrc") != 0)
+      continue;
+
+    value = attr->value;
+
+    /* p is now of the format ssrc attribute[:value] */
+    to_free = p = g_strdup (value);
+
+    ssrc = strtoul (p, &tmp, 10);
+    if (*tmp != ' ') {
+      GST_ERROR ("Invalid ssrc attribute '%s'", to_free);
+      goto next;
+    }
+
+    /* At the space */
+    p = tmp;
+
+    SKIP_SPACES (p);
+
+    tmp = strstr (p, ":");
+    if (tmp == NULL) {
+      ssrc_attr = tmp;
+      ssrc_val = (gchar *) "";
+    } else {
+      ssrc_attr = p;
+      *tmp = '\0';
+      p = tmp + 1;
+      ssrc_val = p;
+    }
+
+    if (ssrc_attr == NULL || *ssrc_attr == '\0') {
+      GST_ERROR ("Invalid ssrc attribute '%s'", to_free);
+      goto next;
+    }
+
+    key = g_strdup_printf ("ssrc-%u-%s", ssrc, ssrc_attr);
+    gst_structure_set (s, key, G_TYPE_STRING, ssrc_val, NULL);
+    GST_DEBUG ("adding caps: %s=%s", key, ssrc_val);
+    g_free (key);
+
+  next:
+    g_free (to_free);
+  }
+  return GST_SDP_OK;
+}
+
+/* parses RID SDP attributes (RFC8851) into caps */
+static GstSDPResult
+gst_sdp_media_add_rid_attributes (GArray * attributes, GstCaps * caps)
+{
+  const gchar *rid;
+  char *p, *to_free;
+  guint i;
+  GstStructure *s;
+
+  g_return_val_if_fail (attributes != NULL, GST_SDP_EINVAL);
+  g_return_val_if_fail (caps != NULL && GST_IS_CAPS (caps), GST_SDP_EINVAL);
+  g_return_val_if_fail (gst_caps_is_writable (caps), GST_SDP_EINVAL);
+
+  s = gst_caps_get_structure (caps, 0);
+
+  for (i = 0; i < attributes->len; i++) {
+    GstSDPAttribute *attr;
+    const char *direction, *params, *id;
+    const char *tmp;
+
+    attr = &g_array_index (attributes, GstSDPAttribute, i);
+    if (strcmp (attr->key, "rid") != 0)
+      continue;
+
+    rid = attr->value;
+
+    /* p is now of the format id dir ;-separated-params */
+    to_free = p = g_strdup (rid);
+
+    PARSE_STRING (p, " ", id);
+    if (id == NULL || *id == '\0') {
+      GST_ERROR ("Invalid rid \'%s\'", to_free);
+      goto next;
+    }
+    tmp = id;
+    while (*tmp && (*tmp == '-' || *tmp == '_' || g_ascii_isalnum (*tmp)))
+      tmp++;
+    if (*tmp != '\0') {
+      GST_ERROR ("Invalid rid-id \'%s\'", id);
+      goto next;
+    }
+
+    SKIP_SPACES (p);
+
+    PARSE_STRING (p, " ", direction);
+    if (direction == NULL || *direction == '\0') {
+      direction = p;
+      params = NULL;
+    } else {
+      SKIP_SPACES (p);
+
+      params = p;
+    }
+
+    if (direction == NULL || *direction == '\0'
+        || (g_strcmp0 (direction, "send") != 0
+            && g_strcmp0 (direction, "recv") != 0)) {
+      GST_ERROR ("Invalid rid direction \'%s\'", p);
+      goto next;
+    }
+
+    if (params && *params != '\0') {
+      GValue arr = G_VALUE_INIT;
+      GValue val = G_VALUE_INIT;
+      gchar *key;
+#if !defined(GST_DISABLE_DEBUG)
+      GString *debug_params = g_string_new (NULL);
+      int i = 0;
+#endif
+
+      key = g_strdup_printf ("rid-%s", id);
+
+      g_value_init (&arr, GST_TYPE_ARRAY);
+      g_value_init (&val, G_TYPE_STRING);
+
+      g_value_set_string (&val, direction);
+      gst_value_array_append_and_take_value (&arr, &val);
+      val = (GValue) G_VALUE_INIT;
+
+      while (*p) {
+        const char *param;
+        gboolean done = FALSE;
+
+        PARSE_STRING (p, ";", param);
+
+        if (param) {
+        } else if (*p) {
+          param = p;
+          done = TRUE;
+        } else {
+          break;
+        }
+
+        g_value_init (&val, G_TYPE_STRING);
+        g_value_set_string (&val, param);
+        gst_value_array_append_and_take_value (&arr, &val);
+        val = (GValue) G_VALUE_INIT;
+#if !defined(GST_DISABLE_DEBUG)
+        if (i++ > 0)
+          g_string_append_c (debug_params, ',');
+        g_string_append (debug_params, param);
+#endif
+
+        if (done)
+          break;
+      }
+
+      gst_structure_take_value (s, key, &arr);
+      arr = (GValue) G_VALUE_INIT;
+#if !defined(GST_DISABLE_DEBUG)
+      {
+        char *debug_str = g_string_free (debug_params, FALSE);
+        GST_DEBUG ("adding caps: %s=<%s,%s>", key, direction, debug_str);
+        g_free (debug_str);
+      }
+#endif
+      g_free (key);
+    } else {
+      gchar *key;
+
+      key = g_strdup_printf ("rid-%s", id);
+      gst_structure_set (s, key, G_TYPE_STRING, direction, NULL);
+      GST_DEBUG ("adding caps: %s=%s", key, direction);
+      g_free (key);
+    }
+
+  next:
+    g_clear_pointer (&to_free, g_free);
+  }
+  return GST_SDP_OK;
+}
+
 /**
  * gst_sdp_message_attributes_to_caps:
  * @msg: a #GstSDPMessage
@@ -4369,6 +4624,16 @@ gst_sdp_media_attributes_to_caps (const GstSDPMedia * media, GstCaps * caps)
   if (res == GST_SDP_OK) {
     /* parse media extmap field */
     res = gst_sdp_media_add_extmap_attributes (media->attributes, caps);
+  }
+
+  if (res == GST_SDP_OK) {
+    /* parse media ssrc field */
+    res = gst_sdp_media_add_ssrc_attributes (media->attributes, caps);
+  }
+
+  if (res == GST_SDP_OK) {
+    /* parse media rid fields */
+    res = gst_sdp_media_add_rid_attributes (media->attributes, caps);
   }
 
 done:

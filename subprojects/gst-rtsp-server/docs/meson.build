@@ -37,11 +37,11 @@ else
         required: false)
 endif
 
-plugins_cache = join_paths(meson.current_source_dir(), 'gst_plugins_cache.json')
+plugins_cache = join_paths(meson.current_source_dir(), 'plugins', 'gst_plugins_cache.json')
 if plugins.length() == 0
     message('All rtsp-server plugins have been disabled')
 elif plugins_cache_generator.found()
-    plugins_doc_dep = custom_target('rtsp-server-plugins-doc-cache',
+    gst_plugins_doc_dep = custom_target('rtsp-server-plugins-doc-cache',
         command: [plugins_cache_generator, plugins_cache, '@OUTPUT@', '@INPUT@'],
         input: plugins,
         output: 'gst_plugins_cache.json',
@@ -91,13 +91,14 @@ libs_doc = [hotdoc.generate_doc('gst-rtsp-server',
     gi_index: 'index.md',
     gi_smart_index: true,
     gi_order_generated_subpages: true,
+    depends: rtsp_server_gir[0],
 )]
 
 plugins_doc = [hotdoc.generate_doc('rtspclientsink',
     project_version: api_version,
-    sitemap: 'plugin-sitemap.txt',
-    index: 'plugin-index.md',
-    gst_index: 'plugin-index.md',
+    sitemap: 'plugins/sitemap.txt',
+    index: 'plugins/index.md',
+    gst_index: 'plugins/index.md',
     gst_c_sources: ['../gst/rtsp-sink/*.[ch]'],
     gst_dl_sources: [rtspsink.full_path()],
     gst_smart_index: true,

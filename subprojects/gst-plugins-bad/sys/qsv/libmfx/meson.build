@@ -1,22 +1,14 @@
-mfx_win_sources = [
+mfx_win32_sources = [
   'dispatcher/windows/main.cpp',
+  'dispatcher/windows/mfx_critical_section.cpp',
   'dispatcher/windows/mfx_dispatcher_log.cpp',
   'dispatcher/windows/mfx_dispatcher.cpp',
+  'dispatcher/windows/mfx_driver_store_loader.cpp',
   'dispatcher/windows/mfx_dxva2_device.cpp',
   'dispatcher/windows/mfx_function_table.cpp',
-  'dispatcher/windows/mfx_load_dll.cpp',
-]
-
-mfx_win32_sources = [
-  'dispatcher/windows/mfx_critical_section.cpp',
-  'dispatcher/windows/mfx_driver_store_loader.cpp',
   'dispatcher/windows/mfx_library_iterator.cpp',
+  'dispatcher/windows/mfx_load_dll.cpp',
   'dispatcher/windows/mfx_win_reg_key.cpp',
-]
-
-mfx_uwp_sources = [
-  'dispatcher/windows/mfx_dispatcher_uwp.cpp',
-  'dispatcher/windows/mfx_driver_store_loader.cpp',
 ]
 
 mfx_linux_sources = [
@@ -32,15 +24,11 @@ vpl_sources = [
   'dispatcher/vpl/mfx_dispatcher_vpl.cpp',
 ]
 
-libmfx_extra_args = [
-  '-DONEVPL_EXPERIMENTAL'
-]
+libmfx_extra_args = []
 libmfx_extra_deps = []
 
 libmfx_sources = vpl_sources
 if host_system == 'windows'
-  libmfx_sources += mfx_win_sources
-  # FIXME: check UWP only
   libmfx_sources += mfx_win32_sources
 elif host_system == 'linux'
   libmfx_sources += mfx_linux_sources
@@ -90,8 +78,9 @@ libmfx_static = static_library('libmfx-static',
   libmfx_sources,
   c_args : libmfx_extra_args,
   cpp_args : libmfx_extra_args,
-  dependencies : libmfx_extra_deps,
-  include_directories : libmfx_incl
+  dependencies : libmfx_extra_deps + [gst_dep],
+  include_directories : libmfx_incl,
+  override_options: ['werror=false'],
 )
 
 libmfx_internal_dep = declare_dependency(

@@ -16,10 +16,9 @@ if opus_dep.found()
     c_args : gst_plugins_base_args,
     link_args : noseh_link_args,
     include_directories: [configinc, libsinc],
-    dependencies : glib_deps + [pbutils_dep, tag_dep, audio_dep, gst_dep, gst_base_dep, opus_dep, libm],
+    dependencies : [pbutils_dep, tag_dep, audio_dep, gst_dep, gst_base_dep, opus_dep, libm],
     install : true,
     install_dir : plugins_install_dir,
   )
-  pkgconfig.generate(gstopus, install_dir : plugins_pkgconfig_install_dir)
   plugins += [gstopus]
 endif

@@ -77,7 +77,7 @@
 #include <stdlib.h>             /* atoi() */
 #endif
 #include <gst/gstelement.h>
-#include <gst/gst-i18n-plugin.h>
+#include <glib/gi18n-lib.h>
 #include "gstsoupelements.h"
 #include "gstsouphttpsrc.h"
 #include "gstsouputils.h"
@@ -94,6 +94,7 @@
 
 #define GST_TYPE_SOUP_SESSION (gst_soup_session_get_type())
 #define GST_SOUP_SESSION(obj) (G_TYPE_CHECK_INSTANCE_CAST ((obj), GST_TYPE_SOUP_SESSION, GstSoupSession))
+#define gst_soup_session_parent_class session_parent_class
 
 GType gst_soup_session_get_type (void);
 
@@ -137,8 +138,9 @@ gst_soup_session_finalize (GObject * obj)
   GSource *src;
 
   /* handle disposing of failure cases */
-  if (!sess->loop)
-    return;
+  if (!sess->loop) {
+    goto cleanup;
+  }
 
   src = g_idle_source_new ();
 
@@ -150,6 +152,8 @@ gst_soup_session_finalize (GObject * obj)
   g_assert (!g_main_context_is_owner (g_main_loop_get_context (sess->loop)));
   g_thread_join (sess->thread);
   g_main_loop_unref (sess->loop);
+cleanup:
+  G_OBJECT_CLASS (session_parent_class)->finalize (obj);
 }
 
 static void
@@ -272,8 +276,9 @@ static gboolean gst_soup_http_src_accept_certificate_cb (SoupMessage * msg,
 G_DEFINE_TYPE_WITH_CODE (GstSoupHTTPSrc, gst_soup_http_src, GST_TYPE_PUSH_SRC,
     G_IMPLEMENT_INTERFACE (GST_TYPE_URI_HANDLER,
         gst_soup_http_src_uri_handler_init));
-GST_ELEMENT_REGISTER_DEFINE_WITH_CODE (souphttpsrc, "souphttpsrc",
-    GST_RANK_PRIMARY, GST_TYPE_SOUP_HTTP_SRC, soup_element_init (plugin));
+
+static gboolean souphttpsrc_element_init (GstPlugin * plugin);
+GST_ELEMENT_REGISTER_DEFINE_CUSTOM (souphttpsrc, souphttpsrc_element_init);
 
 static void
 gst_soup_http_src_class_init (GstSoupHTTPSrcClass * klass)
@@ -519,9 +524,6 @@ gst_soup_http_src_class_init (GstSoupHTTPSrcClass * klass)
   gstbasesrc_class->query = GST_DEBUG_FUNCPTR (gst_soup_http_src_query);
 
   gstpushsrc_class->create = GST_DEBUG_FUNCPTR (gst_soup_http_src_create);
-
-  GST_DEBUG_CATEGORY_INIT (souphttpsrc_debug, "souphttpsrc", 0,
-      "SOUP HTTP src");
 }
 
 static void
@@ -1014,11 +1016,14 @@ thread_func (gpointer user_data)
           NULL);
       g_object_unref (proxy_resolver);
     }
+#if !defined(LINK_SOUP) || LINK_SOUP == 2
   } else {
     g_object_set (session->session, "ssl-strict", src->ssl_strict, NULL);
     if (src->proxy != NULL) {
+      /* Need #if because there's no proxy->soup_uri when LINK_SOUP == 3 */
       g_object_set (session->session, "proxy-uri", src->proxy->soup_uri, NULL);
     }
+#endif
   }
 
   gst_soup_util_log_setup (session->session, src->log_level,
@@ -1164,7 +1169,7 @@ gst_soup_http_src_session_open (GstSoupHTTPSrc * src)
     /* now owned by the loop */
     g_main_context_unref (ctx);
 
-    src->session->thread = g_thread_try_new ("souphttpsrc-thread",
+    src->session->thread = g_thread_try_new ("souphttpsrc",
         thread_func, src, NULL);
 
     if (!src->session->thread) {
@@ -1612,6 +1617,8 @@ gst_soup_http_src_parse_status (SoupMessage * msg, GstSoupHTTPSrc * src)
     return GST_FLOW_OK;
   }
 
+  /* SOUP_STATUS_IS_TRANSPORT_ERROR was replaced with GError in libsoup-3.0 */
+#if !defined(LINK_SOUP) || LINK_SOUP == 2
   if (SOUP_STATUS_IS_TRANSPORT_ERROR (status_code)) {
     switch (status_code) {
       case SOUP_STATUS_CANT_RESOLVE:
@@ -1647,6 +1654,7 @@ gst_soup_http_src_parse_status (SoupMessage * msg, GstSoupHTTPSrc * src)
     }
     return GST_FLOW_OK;
   }
+#endif
 
   if (SOUP_STATUS_IS_CLIENT_ERROR (status_code) ||
       SOUP_STATUS_IS_REDIRECTION (status_code) ||
@@ -1770,8 +1778,20 @@ gst_soup_http_src_build_message (GstSoupHTTPSrc * src, const gchar * method)
         G_CALLBACK (gst_soup_http_src_authenticate_cb), src);
   }
 
-  _soup_message_set_flags (src->msg, SOUP_MESSAGE_OVERWRITE_CHUNKS |
-      (src->automatic_redirect ? 0 : SOUP_MESSAGE_NO_REDIRECT));
+  {
+    SoupMessageFlags flags =
+        src->automatic_redirect ? 0 : SOUP_MESSAGE_NO_REDIRECT;
+
+    /* SOUP_MESSAGE_OVERWRITE_CHUNKS is gone in libsoup-3.0, and
+     * soup_message_body_set_accumulate() requires SoupMessageBody, which
+     * can only be fetched from SoupServerMessage, not SoupMessage */
+#if !defined(LINK_SOUP) || LINK_SOUP == 2
+    if (gst_soup_loader_get_api_version () == 2)
+      flags |= SOUP_MESSAGE_OVERWRITE_CHUNKS;
+#endif
+
+    _soup_message_set_flags (src->msg, flags);
+  }
 
   if (src->automatic_redirect) {
     g_signal_connect (src->msg, "restarted",
@@ -2612,4 +2632,21 @@ gst_soup_http_src_uri_handler_init (gpointer g_iface, gpointer iface_data)
   iface->get_protocols = gst_soup_http_src_uri_get_protocols;
   iface->get_uri = gst_soup_http_src_uri_get_uri;
   iface->set_uri = gst_soup_http_src_uri_set_uri;
+}
+
+static gboolean
+souphttpsrc_element_init (GstPlugin * plugin)
+{
+  gboolean ret = TRUE;
+
+  GST_DEBUG_CATEGORY_INIT (souphttpsrc_debug, "souphttpsrc", 0,
+      "SOUP HTTP src");
+
+  if (!soup_element_init (plugin))
+    return TRUE;
+
+  ret = gst_element_register (plugin, "souphttpsrc",
+      GST_RANK_PRIMARY, GST_TYPE_SOUP_HTTP_SRC);
+
+  return ret;
 }

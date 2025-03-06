@@ -62,19 +62,21 @@ static const char gst_vaapipostproc_sink_caps_str[] =
   GST_VAAPI_MAKE_SURFACE_CAPS ", "
   GST_CAPS_INTERLACED_MODES "; "
   GST_VIDEO_CAPS_MAKE (GST_VAAPI_FORMATS_ALL) ", "
-   GST_CAPS_INTERLACED_MODES;
+  GST_CAPS_INTERLACED_MODES "; "
+  GST_VIDEO_CAPS_MAKE_WITH_FEATURES (GST_CAPS_FEATURE_MEMORY_DMABUF,
+      GST_VAAPI_FORMATS_ALL) ", "
+  GST_CAPS_INTERLACED_MODES;
 /* *INDENT-ON* */
 
 /* *INDENT-OFF* */
 static const char gst_vaapipostproc_src_caps_str[] =
   GST_VAAPI_MAKE_SURFACE_CAPS ", "
   GST_CAPS_INTERLACED_FALSE "; "
-#if (USE_GLX || USE_EGL)
+#if (GST_VAAPI_USE_GLX || GST_VAAPI_USE_EGL)
   GST_VAAPI_MAKE_GLTEXUPLOAD_CAPS "; "
 #endif
   GST_VIDEO_CAPS_MAKE (GST_VAAPI_FORMATS_ALL) ", "
-  GST_CAPS_INTERLACED_MODES "; "
-  GST_VAAPI_MAKE_DMABUF_CAPS;
+  GST_CAPS_INTERLACED_MODES;
 /* *INDENT-ON* */
 
 /* *INDENT-OFF* */
@@ -287,7 +289,8 @@ gst_vaapipostproc_ensure_filter_caps (GstVaapiPostproc * postproc)
   }
 
   if (!postproc->filter_formats) {
-    postproc->filter_formats = gst_vaapi_filter_get_formats (postproc->filter);
+    postproc->filter_formats = gst_vaapi_filter_get_formats
+        (postproc->filter, NULL, NULL, NULL, NULL);
     if (!postproc->filter_formats)
       return FALSE;
   }
@@ -1292,50 +1295,71 @@ gst_vaapipostproc_update_src_caps (GstVaapiPostproc * postproc, GstCaps * caps,
 static gboolean
 ensure_allowed_sinkpad_caps (GstVaapiPostproc * postproc)
 {
-  GstCaps *out_caps, *raw_caps;
-  guint i, num_structures;
+  GstCaps *out_caps = NULL;
+  guint mem_types;
+  gint min_width, min_height, max_width, max_height;
+  GArray *mem_formats = NULL;
+  gboolean ret = TRUE;
+  guint i, num_structure;
 
-  if (postproc->allowed_sinkpad_caps)
-    return TRUE;
+  if (postproc->allowed_sinkpad_caps) {
+    ret = TRUE;
+    goto out;
+  }
 
-  if (!GST_VAAPI_PLUGIN_BASE_DISPLAY (postproc))
-    return FALSE;
+  if (!GST_VAAPI_PLUGIN_BASE_DISPLAY (postproc) ||
+      !gst_vaapipostproc_ensure_filter_caps (postproc)) {
+    ret = FALSE;
+    goto out;
+  }
 
-  /* Create VA caps */
-  out_caps = gst_caps_from_string (GST_VAAPI_MAKE_SURFACE_CAPS ", "
-      GST_CAPS_INTERLACED_MODES);
+  mem_types = gst_vaapi_filter_get_memory_types (postproc->filter);
+  mem_formats = gst_vaapi_filter_get_formats (postproc->filter, &min_width,
+      &min_height, &max_width, &max_height);
+
+  out_caps = gst_vaapi_build_caps_from_formats (mem_formats, min_width,
+      min_height, max_width, max_height, mem_types);
   if (!out_caps) {
     GST_WARNING_OBJECT (postproc, "failed to create VA sink caps");
-    return FALSE;
+    ret = FALSE;
+    goto out;
   }
 
-  raw_caps = gst_vaapi_plugin_base_get_allowed_sinkpad_raw_caps
-      (GST_VAAPI_PLUGIN_BASE (postproc));
-  if (!raw_caps) {
-    gst_caps_unref (out_caps);
-    GST_WARNING_OBJECT (postproc, "failed to create YUV sink caps");
-    return FALSE;
-  }
-
-  out_caps = gst_caps_make_writable (out_caps);
-  gst_caps_append (out_caps, gst_caps_copy (raw_caps));
-
-  num_structures = gst_caps_get_size (out_caps);
-  for (i = 0; i < num_structures; i++) {
+  /* For raw yuv caps, we need to replace va attrib formats with all image formats */
+  num_structure = gst_caps_get_size (out_caps);
+  for (i = 0; i < num_structure; i++) {
     GstStructure *structure;
+    GstCapsFeatures *features = gst_caps_get_features (out_caps, i);
+    GValue v_formats = G_VALUE_INIT;
 
     structure = gst_caps_get_structure (out_caps, i);
     if (!structure)
       continue;
 
-    if (postproc->filter)
-      gst_vaapi_filter_append_caps (postproc->filter, structure);
+    if (gst_caps_features_contains (features,
+            GST_CAPS_FEATURE_MEMORY_SYSTEM_MEMORY)) {
+      mem_formats = gst_vaapi_display_get_image_formats
+          (GST_VAAPI_PLUGIN_BASE_DISPLAY (postproc));
+      if (!gst_vaapi_value_set_format_list (&v_formats, mem_formats)) {
+        ret = FALSE;
+        goto out;
+      }
+      gst_structure_set_value (structure, "format", &v_formats);
+      g_value_unset (&v_formats);
+    }
   }
 
   postproc->allowed_sinkpad_caps = out_caps;
+  out_caps = NULL;
+  GST_INFO_OBJECT (postproc, "postproc sink allowed caps is %" GST_PTR_FORMAT,
+      postproc->allowed_sinkpad_caps);
+out:
+  if (out_caps)
+    gst_caps_unref (out_caps);
+  if (mem_formats)
+    g_array_unref (mem_formats);
 
-  /* XXX: append VA/VPP filters */
-  return TRUE;
+  return ret;
 }
 
 /* Fixup output caps so that to reflect the supported set of pixel formats */
@@ -1899,20 +1923,16 @@ gst_vaapipostproc_src_event (GstBaseTransform * trans, GstEvent * event)
 {
   GstVaapiPostproc *const postproc = GST_VAAPIPOSTPROC (trans);
   gdouble new_x = 0, new_y = 0, x = 0, y = 0, w_factor = 1, h_factor = 1;
-  GstStructure *structure;
   gboolean ret;
 
   GST_TRACE_OBJECT (postproc, "handling %s event", GST_EVENT_TYPE_NAME (event));
 
   switch (GST_EVENT_TYPE (event)) {
     case GST_EVENT_NAVIGATION:
-      event =
-          GST_EVENT (gst_mini_object_make_writable (GST_MINI_OBJECT (event)));
+      event = gst_event_make_writable (event);
 
-      structure = (GstStructure *) gst_event_get_structure (event);
-      if (postproc->has_vpp
-          && gst_structure_get_double (structure, "pointer_x", &x)
-          && gst_structure_get_double (structure, "pointer_y", &y)) {
+      if (postproc->has_vpp &&
+          gst_navigation_event_get_coordinates (event, &x, &y)) {
         GST_DEBUG_OBJECT (postproc, "converting %fx%f", x, y);
 
         /* video-direction compensation */
@@ -1961,8 +1981,7 @@ gst_vaapipostproc_src_event (GstBaseTransform * trans, GstEvent * event)
         new_y += postproc->crop_top;
 
         GST_DEBUG_OBJECT (postproc, "to %fx%f", new_x, new_y);
-        gst_structure_set (structure, "pointer_x", G_TYPE_DOUBLE, new_x,
-            "pointer_y", G_TYPE_DOUBLE, new_y, NULL);
+        gst_navigation_event_set_coordinates (event, new_x, new_y);
       }
       break;
     default:
@@ -1981,7 +2000,7 @@ gst_vaapipostproc_sink_event (GstBaseTransform * trans, GstEvent * event)
 {
   GstVaapiPostproc *const postproc = GST_VAAPIPOSTPROC (trans);
   GstTagList *taglist;
-  gchar *orientation;
+  GstVideoOrientationMethod method;
   gboolean ret;
   gboolean do_reconf;
 
@@ -1991,33 +2010,12 @@ gst_vaapipostproc_sink_event (GstBaseTransform * trans, GstEvent * event)
     case GST_EVENT_TAG:
       gst_event_parse_tag (event, &taglist);
 
-      if (gst_tag_list_get_string (taglist, "image-orientation", &orientation)) {
-        do_reconf = TRUE;
-        if (!g_strcmp0 ("rotate-0", orientation))
-          postproc->tag_video_direction = GST_VIDEO_ORIENTATION_IDENTITY;
-        else if (!g_strcmp0 ("rotate-90", orientation))
-          postproc->tag_video_direction = GST_VIDEO_ORIENTATION_90R;
-        else if (!g_strcmp0 ("rotate-180", orientation))
-          postproc->tag_video_direction = GST_VIDEO_ORIENTATION_180;
-        else if (!g_strcmp0 ("rotate-270", orientation))
-          postproc->tag_video_direction = GST_VIDEO_ORIENTATION_90L;
-        else if (!g_strcmp0 ("flip-rotate-0", orientation))
-          postproc->tag_video_direction = GST_VIDEO_ORIENTATION_HORIZ;
-        else if (!g_strcmp0 ("flip-rotate-90", orientation))
-          postproc->tag_video_direction = GST_VIDEO_ORIENTATION_UL_LR;
-        else if (!g_strcmp0 ("flip-rotate-180", orientation))
-          postproc->tag_video_direction = GST_VIDEO_ORIENTATION_VERT;
-        else if (!g_strcmp0 ("flip-rotate-270", orientation))
-          postproc->tag_video_direction = GST_VIDEO_ORIENTATION_UR_LL;
-        else
-          do_reconf = FALSE;
+      do_reconf = gst_video_orientation_from_tag (taglist, &method);
 
-        g_free (orientation);
-
-        if (do_reconf) {
-          postproc->flags |= GST_VAAPI_POSTPROC_FLAG_VIDEO_DIRECTION;
-          gst_base_transform_reconfigure_src (trans);
-        }
+      if (do_reconf) {
+        postproc->tag_video_direction = method;
+        postproc->flags |= GST_VAAPI_POSTPROC_FLAG_VIDEO_DIRECTION;
+        gst_base_transform_reconfigure_src (trans);
       }
       break;
     default:

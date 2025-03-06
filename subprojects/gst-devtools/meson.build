@@ -1,6 +1,6 @@
 project('gst-devtools', 'c',
-  version : '1.21.0.1',
-  meson_version : '>= 0.59',
+  version : '1.22.12.1',
+  meson_version : '>= 0.62',
   default_options : [ 'warning_level=1',
                       'c_std=gnu99',
                       'buildtype=debugoptimized' ])
@@ -28,7 +28,7 @@ osxversion = curversion + 1
 
 prefix = get_option('prefix')
 
-glib_req = '>= 2.56.0'
+glib_req = '>= 2.62.0'
 
 if gst_version_is_stable
   gst_req = '>= @0@.@1@.0'.format(gst_version_major, gst_version_minor)
@@ -63,6 +63,12 @@ else
   noseh_link_args = []
 endif
 
+# glib doesn't support unloading, which means that unloading and reloading
+# any library that registers static types will fail
+if cc.has_link_argument('-Wl,-z,nodelete')
+  add_project_link_arguments('-Wl,-z,nodelete', language: 'c')
+endif
+
 # Symbol visibility
 if cc.has_argument('-fvisibility=hidden')
   add_project_arguments('-fvisibility=hidden', language: 'c')
@@ -87,12 +93,8 @@ gst_check_dep = dependency('gstreamer-check-1.0', version : gst_req,
   required : get_option('validate'),
   fallback : ['gstreamer', 'gst_check_dep'])
 
-glib_dep = dependency('glib-2.0', version : '>=2.32.0',
-  fallback: ['glib', 'libglib_dep'])
-gmodule_dep = dependency('gmodule-2.0',
-  fallback: ['glib', 'libgmodule_dep'])
-gio_dep = dependency('gio-2.0',
-  fallback: ['glib', 'libgio_dep'])
+gio_dep = dependency('gio-2.0', version: glib_req)
+gmodule_dep = dependency('gmodule-no-export-2.0')
 
 gtk_dep = dependency('gtk+-3.0', required: false)
 mathlib = cc.find_library('m', required : false)
@@ -135,7 +137,6 @@ warning_flags = [
   '-Wmissing-include-dirs',
   '-Waddress',
   '-Wno-multichar',
-  '-Wdeclaration-after-statement',
   '-Wvla',
   '-Wpointer-arith',
 ]
@@ -155,12 +156,12 @@ if get_option('default_library') == 'shared'
 endif
 pkgconfig_subdirs = ['gstreamer-1.0']
 
-plugins_doc_dep = []
+gst_plugins_doc_dep = []
 plugins = []
 i18n = import('i18n')
 
 static_build = get_option('default_library') == 'static'
-libraries = []
+gst_libraries = []
 
 python_mod = import('python')
 python3 = python_mod.find_installation()
@@ -172,3 +173,23 @@ if not get_option('debug_viewer').disabled()
   subdir('debug-viewer')
 endif
 subdir('docs')
+
+meson.add_dist_script('scripts/gen-changelog.py', meson.project_name(), '1.20.0', meson.project_version())
+
+plugin_names = []
+gst_plugins = []
+foreach plugin: plugins
+  pkgconfig.generate(plugin, install_dir: plugins_pkgconfig_install_dir)
+  dep = declare_dependency(link_with: plugin, variables: {'full_path': plugin.full_path()})
+  meson.override_dependency(plugin.name(), dep)
+  gst_plugins += [dep]
+  if plugin.name().startswith('gst')
+    plugin_names += [plugin.name().substring(3)]
+  else
+    plugin_names += [plugin.name()]
+  endif
+endforeach
+
+summary({
+    'Plugins': plugin_names,
+}, list_sep: ', ')

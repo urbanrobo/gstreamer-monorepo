@@ -183,6 +183,9 @@ struct _GstAppSrcPrivate
 
   guint64 min_latency;
   guint64 max_latency;
+  /* Tracks whether the latency message was posted at least once */
+  gboolean posted_latency_msg;
+
   gboolean emit_signals;
   guint min_percent;
   gboolean handle_segment_change;
@@ -621,11 +624,14 @@ gst_app_src_class_init (GstAppSrcClass * klass)
    /**
     * GstAppSrc::push-buffer:
     * @appsrc: the appsrc
-    * @buffer: a buffer to push
+    * @buffer: (transfer none): a buffer to push
     *
     * Adds a buffer to the queue of buffers that the appsrc element will
-    * push to its source pad. This function does not take ownership of the
-    * buffer so the buffer needs to be unreffed after calling this function.
+    * push to its source pad.
+    *
+    * This function does not take ownership of the buffer, but it takes a
+    * reference so the buffer can be unreffed at any time after calling this
+    * function.
     *
     * When the block property is TRUE, this function can block until free space
     * becomes available in the queue.
@@ -639,12 +645,14 @@ gst_app_src_class_init (GstAppSrcClass * klass)
    /**
     * GstAppSrc::push-buffer-list:
     * @appsrc: the appsrc
-    * @buffer_list: a buffer list to push
+    * @buffer_list: (transfer none): a buffer list to push
     *
     * Adds a buffer list to the queue of buffers and buffer lists that the
-    * appsrc element will push to its source pad. This function does not take
-    * ownership of the buffer list so the buffer list needs to be unreffed
-    * after calling this function.
+    * appsrc element will push to its source pad.
+    *
+    * This function does not take ownership of the buffer list, but it takes a
+    * reference so the buffer list can be unreffed at any time after calling
+    * this function.
     *
     * When the block property is TRUE, this function can block until free space
     * becomes available in the queue.
@@ -660,7 +668,7 @@ gst_app_src_class_init (GstAppSrcClass * klass)
   /**
     * GstAppSrc::push-sample:
     * @appsrc: the appsrc
-    * @sample: a sample from which extract buffer to push
+    * @sample: (transfer none): a sample from which extract buffer to push
     *
     * Extract a buffer from the provided sample and adds the extracted buffer
     * to the queue of buffers that the appsrc element will
@@ -668,8 +676,10 @@ gst_app_src_class_init (GstAppSrcClass * klass)
     * in the sample and reset the caps if they change.
     * Only the caps and the buffer of the provided sample are used and not
     * for example the segment in the sample.
-    * This function does not take ownership of the
-    * sample so the sample needs to be unreffed after calling this function.
+    *
+    * This function does not take ownership of the sample, but it takes a
+    * reference so the sample can be unreffed at any time after calling this
+    * function.
     *
     * When the block property is TRUE, this function can block until free space
     * becomes available in the queue.
@@ -1096,6 +1106,7 @@ gst_app_src_stop (GstBaseSrc * bsrc)
   priv->is_eos = FALSE;
   priv->flushing = TRUE;
   priv->started = FALSE;
+  priv->posted_latency_msg = FALSE;
   gst_app_src_flush_queued (appsrc, TRUE);
   g_cond_broadcast (&priv->cond);
   g_mutex_unlock (&priv->mutex);
@@ -1318,7 +1329,7 @@ gst_app_src_do_negotiate (GstBaseSrc * basesrc)
 {
   GstAppSrc *appsrc = GST_APP_SRC_CAST (basesrc);
   GstAppSrcPrivate *priv = appsrc->priv;
-  gboolean result;
+  gboolean result = TRUE;
   GstCaps *caps;
 
   GST_OBJECT_LOCK (basesrc);
@@ -1331,8 +1342,6 @@ gst_app_src_do_negotiate (GstBaseSrc * basesrc)
   if (caps) {
     result = gst_base_src_set_caps (basesrc, caps);
     gst_caps_unref (caps);
-  } else {
-    result = GST_BASE_SRC_CLASS (parent_class)->negotiate (basesrc);
   }
   g_mutex_lock (&priv->mutex);
 
@@ -1645,6 +1654,8 @@ gst_app_src_create (GstBaseSrc * bsrc, guint64 offset, guint size,
          * instead of outputting it */
         if (priv->need_discont_downstream) {
           buffer = gst_buffer_make_writable (buffer);
+          /* In case it reallocates the buffer */
+          obj = GST_MINI_OBJECT (buffer);
           GST_BUFFER_FLAG_SET (buffer, GST_BUFFER_FLAG_DISCONT);
           priv->need_discont_downstream = FALSE;
         }
@@ -1661,6 +1672,8 @@ gst_app_src_create (GstBaseSrc * bsrc, guint64 offset, guint size,
           GstBuffer *buffer;
 
           buffer_list = gst_buffer_list_make_writable (buffer_list);
+          /* In case it reallocates the bufferlist */
+          obj = GST_MINI_OBJECT (buffer_list);
           buffer = gst_buffer_list_get_writable (buffer_list, 0);
           GST_BUFFER_FLAG_SET (buffer, GST_BUFFER_FLAG_DISCONT);
           priv->need_discont_downstream = FALSE;
@@ -1865,7 +1878,7 @@ gst_app_src_set_caps (GstAppSrc * appsrc, const GstCaps * caps)
  *
  * Get the configured caps on @appsrc.
  *
- * Returns: the #GstCaps produced by the source. gst_caps_unref() after usage.
+ * Returns: (nullable) (transfer full): the #GstCaps produced by the source. gst_caps_unref() after usage.
  */
 GstCaps *
 gst_app_src_get_caps (GstAppSrc * appsrc)
@@ -2318,6 +2331,10 @@ gst_app_src_set_latencies (GstAppSrc * appsrc, gboolean do_min, guint64 min,
     priv->max_latency = max;
     changed = TRUE;
   }
+  if (!priv->posted_latency_msg) {
+    priv->posted_latency_msg = TRUE;
+    changed = TRUE;
+  }
   g_mutex_unlock (&priv->mutex);
 
   if (changed) {
@@ -2719,7 +2736,7 @@ dropped:
         gst_buffer_unref (buffer);
     }
     g_mutex_unlock (&priv->mutex);
-    return GST_FLOW_EOS;
+    return GST_FLOW_OK;
   }
 }
 

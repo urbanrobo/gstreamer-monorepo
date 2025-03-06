@@ -9,6 +9,15 @@ if meson.is_cross_build()
     subdir_done()
 endif
 
+if static_build
+    if get_option('doc').enabled()
+        error('Documentation enabled but not supported when building statically.')
+    endif
+
+    message('Building statically, can\'t build the documentation')
+    subdir_done()
+endif
+
 required_hotdoc_extensions = ['gst-extension']
 plugins_cache = join_paths(meson.current_source_dir(), 'gst_plugins_cache.json')
 if gst_dep.type_name() == 'internal'
@@ -22,7 +31,7 @@ endif
 if plugins.length() == 0
     message('All ugly plugins have been disabled')
 elif plugins_cache_generator.found()
-    plugins_doc_dep = custom_target('ugly-plugins-doc-cache',
+    gst_plugins_doc_dep = custom_target('ugly-plugins-doc-cache',
         command: [plugins_cache_generator, plugins_cache, '@OUTPUT@', '@INPUT@'],
         input: plugins,
         output: 'gst_plugins_cache.json',
@@ -99,7 +108,7 @@ foreach plugin_name: list_plugin_res.stdout().split(':')
             join_paths(root_rel, 'gst/*/*.[ch]'),
         ],
         gst_c_source_filters: excludes,
-        dependencies: [gst_dep, plugins],
+        dependencies: [gst_dep],
         gst_order_generated_subpages: true,
         disable_incremental_build: true,
         gst_cache_file: plugins_cache,

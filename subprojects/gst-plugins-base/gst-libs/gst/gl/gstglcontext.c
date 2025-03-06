@@ -402,7 +402,7 @@ gst_gl_context_new (GstGLDisplay * display)
  *
  * @available_apis must not be %GST_GL_API_NONE or %GST_GL_API_ANY
  *
- * Returns: (transfer full): a #GstGLContext wrapping @handle
+ * Returns: (transfer full) (nullable): a #GstGLContext wrapping @handle
  *
  * Since: 1.4
  */
@@ -430,13 +430,6 @@ gst_gl_context_new_wrapped (GstGLDisplay * display, guintptr handle,
 
   context_wrap = g_object_new (GST_TYPE_GL_WRAPPED_CONTEXT, NULL);
   gst_object_ref_sink (context_wrap);
-
-  if (!context_wrap) {
-    /* subclass returned a NULL context */
-    GST_ERROR ("Could not wrap existing context");
-
-    return NULL;
-  }
 
   context = (GstGLContext *) context_wrap;
 
@@ -494,7 +487,7 @@ gst_gl_context_new_wrapped (GstGLDisplay * display, guintptr handle,
  * gst_gl_context_get_current_gl_context:
  * @context_type: a #GstGLPlatform specifying the type of context to retrieve
  *
- * Returns: The OpenGL context handle current in the calling thread or %NULL
+ * Returns: (nullable): The OpenGL context handle current in the calling thread or %NULL
  *
  * Since: 1.6
  */
@@ -543,7 +536,7 @@ gst_gl_context_get_current_gl_context (GstGLPlatform context_type)
  *
  * See also gst_gl_context_get_proc_address().
  *
- * Returns: a function pointer for @name, or %NULL
+ * Returns: (nullable): a function pointer for @name, or %NULL
  *
  * Since: 1.6
  */
@@ -807,7 +800,7 @@ gst_gl_context_activate (GstGLContext * context, gboolean activate)
  * gst_gl_context_get_thread:
  * @context: a #GstGLContext
  *
- * Returns: (transfer full): The #GThread, @context is current in or NULL
+ * Returns: (transfer full) (nullable): The #GThread, @context is current in or NULL
  *
  * Since: 1.6
  */
@@ -877,7 +870,7 @@ gst_gl_context_get_gl_api (GstGLContext * context)
  * void (GSTGLAPI *PFN_glGetIntegerv) (GLenum name, GLint * ret)
  * ]|
  *
- * Returns: a function pointer or %NULL
+ * Returns: (nullable): a function pointer or %NULL
  *
  * Since: 1.4
  */
@@ -908,7 +901,7 @@ gst_gl_context_get_proc_address (GstGLContext * context, const gchar * name)
  *
  * See also: gst_gl_context_get_proc_address()
  *
- * Returns: an address pointing to @name or %NULL
+ * Returns: (nullable): an address pointing to @name or %NULL
  *
  * Since: 1.4
  */
@@ -1026,8 +1019,8 @@ gst_gl_context_can_share (GstGLContext * context, GstGLContext * other_context)
 /**
  * gst_gl_context_create:
  * @context: a #GstGLContext:
- * @other_context: (allow-none): a #GstGLContext to share OpenGL objects with
- * @error: (allow-none): a #GError
+ * @other_context: (nullable): a #GstGLContext to share OpenGL objects with
+ * @error: a #GError
  *
  * Creates an OpenGL context with the specified @other_context as a context
  * to share shareable OpenGL objects with.  See the OpenGL specification for
@@ -1201,8 +1194,19 @@ _build_extension_string (GstGLContext * context)
   return ext_g_str;
 }
 
-//gboolean
-//gst_gl_context_create (GstGLContext * context, GstGLContext * other_context, GError ** error)
+typedef struct
+{
+  GError **error;
+  gboolean ret;
+} FillInfoCtx;
+
+static void
+fill_info (GstGLContext * context, gpointer data)
+{
+  FillInfoCtx *ctx = data;
+  ctx->ret = gst_gl_context_fill_info (context, ctx->error);
+}
+
 static gpointer
 gst_gl_context_create_thread (GstGLContext * context)
 {
@@ -1367,9 +1371,14 @@ gst_gl_context_create_thread (GstGLContext * context)
   g_free (display_api_s);
 
   GST_DEBUG_OBJECT (context, "Filling info");
-  if (!gst_gl_context_fill_info (context, error)) {
-    g_assert (error == NULL || *error != NULL);
-    goto failure;
+  {
+    FillInfoCtx ctx = { 0 };
+    ctx.error = error;
+    gst_gl_context_thread_add (context, fill_info, &ctx);
+    if (!ctx.ret) {
+      g_assert (error == NULL || *error != NULL);
+      goto failure;
+    }
   }
 
   context->priv->alive = TRUE;
@@ -1530,17 +1539,7 @@ gst_gl_context_fill_info (GstGLContext * context, GError ** error)
     goto failure;
   }
 
-  /* Does not implement OES_vertex_array_object properly, see
-   * https://bugzilla.gnome.org/show_bug.cgi?id=750185 */
-  if (g_strcmp0 ((const gchar *) gl->GetString (GL_VENDOR),
-          "Imagination Technologies") == 0
-      && g_strcmp0 ((const gchar *) gl->GetString (GL_RENDERER),
-          "PowerVR SGX 544MP") == 0) {
-    gl->GenVertexArrays = NULL;
-    gl->DeleteVertexArrays = NULL;
-    gl->BindVertexArray = NULL;
-    gl->IsVertexArray = NULL;
-  }
+  gst_gl_context_apply_quirks (context);
 
   if (GST_IS_GL_WRAPPED_CONTEXT (context)) {
     /* XXX: vfunc? */
@@ -1780,7 +1779,7 @@ gst_gl_context_check_feature (GstGLContext * context, const gchar * feature)
  *
  * See also gst_gl_context_activate().
  *
- * Returns: (transfer none): the #GstGLContext active in the current thread or %NULL
+ * Returns: (transfer none) (nullable): the #GstGLContext active in the current thread or %NULL
  *
  * Since: 1.6
  */

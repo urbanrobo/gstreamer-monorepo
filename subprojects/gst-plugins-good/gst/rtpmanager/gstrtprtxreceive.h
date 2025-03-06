@@ -25,17 +25,19 @@
 #define __GST_RTP_RTX_RECEIVE_H__
 
 #include <gst/gst.h>
-#include <gst/rtp/gstrtpbuffer.h>
+#include <gst/rtp/rtp.h>
 
 G_BEGIN_DECLS
+typedef struct _GstRtpRtxReceive GstRtpRtxReceive;
+typedef struct _GstRtpRtxReceiveClass GstRtpRtxReceiveClass;
+
 #define GST_TYPE_RTP_RTX_RECEIVE (gst_rtp_rtx_receive_get_type())
 #define GST_RTP_RTX_RECEIVE(obj) (G_TYPE_CHECK_INSTANCE_CAST((obj),GST_TYPE_RTP_RTX_RECEIVE, GstRtpRtxReceive))
 #define GST_RTP_RTX_RECEIVE_CLASS(klass) (G_TYPE_CHECK_CLASS_CAST((klass),GST_TYPE_RTP_RTX_RECEIVE, GstRtpRtxReceiveClass))
 #define GST_RTP_RTX_RECEIVE_GET_CLASS(obj) (G_TYPE_INSTANCE_GET_CLASS ((obj), GST_TYPE_RTP_RTX_RECEIVE, GstRtpRtxReceiveClass))
 #define GST_IS_RTP_RTX_RECEIVE(obj) (G_TYPE_CHECK_INSTANCE_TYPE((obj),GST_TYPE_RTP_RTX_RECEIVE))
 #define GST_IS_RTP_RTX_RECEIVE_CLASS(obj) (G_TYPE_CHECK_CLASS_TYPE((klass),GST_TYPE_RTP_RTX_RECEIVE))
-typedef struct _GstRtpRtxReceive GstRtpRtxReceive;
-typedef struct _GstRtpRtxReceiveClass GstRtpRtxReceiveClass;
+#define GST_RTP_RTX_RECEIVE_CAST(obj) ((GstRtpRtxReceive *)(obj))
 
 struct _GstRtpRtxReceive
 {
@@ -49,6 +51,8 @@ struct _GstRtpRtxReceive
    * it also works to retrieve rtx stream from master stream
    * as we make sure all ssrc are unique */
   GHashTable *ssrc2_ssrc1_map;
+
+  GstStructure *external_ssrc_map;
 
   /* contains seqnum of request packets of whom their ssrc have
    * not been associated to a rtx stream yet */
@@ -65,6 +69,11 @@ struct _GstRtpRtxReceive
   guint num_rtx_assoc_packets;
 
   GstClockTime last_time;
+
+  GstRTPHeaderExtension *rid_stream;
+  GstRTPHeaderExtension *rid_repaired;
+
+  GstBuffer *dummy_writable;
 };
 
 struct _GstRtpRtxReceiveClass

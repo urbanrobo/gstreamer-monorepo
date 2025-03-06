@@ -332,6 +332,70 @@ GST_START_TEST (test_parse_detect_stream_with_hdr_sei)
 
 GST_END_TEST;
 
+/* 8bits 4:4:4 encoded stream, and profile-level-tier is not spec compliant.
+ * extracted from the file reported at
+ * https://gitlab.freedesktop.org/gstreamer/gstreamer/-/issues/1009
+ */
+static const guint8 broken_profile_codec_data[] = {
+  0x01, 0x24, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  0x99, 0xf0, 0x00, 0xfc, 0xff, 0xf8, 0xf8, 0x00, 0x00, 0x0f, 0x03, 0x20,
+  0x00, 0x01, 0x00, 0x18, 0x40, 0x01, 0x0c, 0x01, 0xff, 0xff, 0x24, 0x08,
+  0x00, 0x00, 0x03, 0x00, 0x00, 0x03, 0x00, 0x00, 0x03, 0x00, 0x00, 0x03,
+  0x00, 0x99, 0xac, 0x09, 0x21, 0x00, 0x01, 0x00, 0x2c, 0x42, 0x01, 0x01,
+  0x24, 0x08, 0x00, 0x00, 0x03, 0x00, 0x00, 0x03, 0x00, 0x00, 0x03, 0x00,
+  0x00, 0x03, 0x00, 0x99, 0x90, 0x00, 0x3c, 0x04, 0x00, 0x44, 0x0f, 0x84,
+  0x72, 0xd6, 0x94, 0x84, 0xb2, 0x5c, 0x40, 0x20, 0x00, 0x00, 0x03, 0x00,
+  0x20, 0x00, 0x00, 0x07, 0x81, 0x22, 0x00, 0x01, 0x00, 0x08, 0x44, 0x01,
+  0xc0, 0xf7, 0x18, 0x30, 0x0c, 0xc9
+};
+
+GST_START_TEST (test_parse_fallback_profile)
+{
+  GstHarness *h = gst_harness_new ("h265parse");
+  GstCaps *caps;
+  GstBuffer *codec_data;
+  GstEvent *event;
+
+  codec_data = gst_buffer_new_memdup (broken_profile_codec_data,
+      sizeof (broken_profile_codec_data));
+
+  caps = gst_caps_from_string ("video/x-h265, stream-format=(string)hvc1, "
+      "alignment=(string)au");
+  gst_caps_set_simple (caps, "codec_data", GST_TYPE_BUFFER, codec_data, NULL);
+  gst_buffer_unref (codec_data);
+
+  gst_harness_set_src_caps (h, caps);
+  while ((event = gst_harness_pull_event (h)) != NULL) {
+    GstStructure *s;
+    const gchar *profile;
+
+    if (GST_EVENT_TYPE (event) != GST_EVENT_CAPS) {
+      gst_event_unref (event);
+      continue;
+    }
+
+    gst_event_parse_caps (event, &caps);
+    s = gst_caps_get_structure (caps, 0);
+    profile = gst_structure_get_string (s, "profile");
+
+    /* h265parse must provide profile */
+    fail_unless (profile);
+
+    /* must not be main profile at least.
+     * main-444 is expected but we might update the profile parsing
+     * logic later. At least it should not be main profile
+     */
+    fail_if (g_strcmp0 (profile, "main") == 0);
+
+    gst_event_unref (event);
+    break;
+  }
+
+  gst_harness_teardown (h);
+}
+
+GST_END_TEST;
+
 static Suite *
 h265parse_suite (void)
 {
@@ -344,6 +408,7 @@ h265parse_suite (void)
   tcase_add_test (tc_chain, test_parse_split);
   tcase_add_test (tc_chain, test_parse_detect_stream);
   tcase_add_test (tc_chain, test_parse_detect_stream_with_hdr_sei);
+  tcase_add_test (tc_chain, test_parse_fallback_profile);
 
   return s;
 }
@@ -1051,6 +1116,68 @@ GST_START_TEST (test_drain)
 
 GST_END_TEST;
 
+GST_START_TEST (test_invalid_sei_in_hvcc)
+{
+  GstHarness *h;
+  GstCaps *caps;
+  GstBuffer *codec_data;
+  /* Consists of 4 arrays (VPS, SPS, PPS, SEI -> broken) and each array contains
+   * single nalu
+   * Captured from the log at
+   * https://gitlab.freedesktop.org/gstreamer/gstreamer/-/issues/2905
+   */
+  static const guint8 hvcc_data[] = {
+    0x01, 0x01, 0x01, 0x01, 0x60, 0x00, 0x90, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0xf0, 0x00, 0xfc, 0xfd, 0xf8, 0xf8, 0x00, 0x00, 0x0f, 0x04, 0x20,
+    0x00, 0x01, 0x00, 0x17, 0x40, 0x01, 0x0c, 0x01, 0xff, 0xff, 0x01, 0x60,
+    0x00, 0x00, 0x03, 0x00, 0x80, 0x00, 0x00, 0x03, 0x00, 0x00, 0x03, 0x00,
+    0x7b, 0xac, 0x09, 0x21, 0x00, 0x01, 0x00, 0x42, 0x42, 0x01, 0x01, 0x01,
+    0x60, 0x00, 0x00, 0x03, 0x00, 0x80, 0x00, 0x00, 0x03, 0x00, 0x00, 0x03,
+    0x00, 0x7b, 0xa0, 0x02, 0x80, 0x80, 0x2d, 0x1f, 0xe3, 0x6b, 0xbb, 0x53,
+    0x77, 0x72, 0x5d, 0x60, 0x2d, 0xc0, 0x40, 0x40, 0x41, 0x00, 0x00, 0x03,
+    0x03, 0xe8, 0x00, 0x00, 0x4e, 0x20, 0x72, 0x1d, 0xee, 0x51, 0x00, 0x05,
+    0xdc, 0x00, 0x00, 0x1a, 0x5e, 0x00, 0x00, 0x2e, 0xe0, 0x00, 0x00, 0xd2,
+    0xf0, 0x08, 0x22, 0x00, 0x01, 0x00, 0x0b, 0x44, 0x01, 0xc1, 0x72, 0xb0,
+    0x9c, 0x38, 0x77, 0x06, 0x0c, 0x24, 0x27, 0x00, 0x01, 0x00, 0x00, 0x00
+  };
+
+  caps = gst_caps_new_simple ("video/x-h265", "stream-format", G_TYPE_STRING,
+      "hvc1", "alignment", G_TYPE_STRING, "au", NULL);
+  codec_data = gst_buffer_new_memdup (hvcc_data, sizeof (hvcc_data));
+  gst_caps_set_simple (caps, "codec_data", GST_TYPE_BUFFER, codec_data, NULL);
+  gst_buffer_unref (codec_data);
+
+  h = gst_harness_new ("h265parse");
+  gst_harness_set_src_caps (h, caps);
+  gst_harness_push_event (h, gst_event_new_eos ());
+
+  while (TRUE) {
+    GstEvent *event = gst_harness_pull_event (h);
+    fail_unless (event);
+
+    if (GST_EVENT_TYPE (event) == GST_EVENT_CAPS) {
+      GstStructure *s;
+      gint width, height;
+
+      gst_event_parse_caps (event, &caps);
+      s = gst_caps_get_structure (caps, 0);
+
+      fail_unless (gst_structure_get_int (s, "width", &width));
+      fail_unless_equals_int (width, 1280);
+      fail_unless (gst_structure_get_int (s, "height", &height));
+      fail_unless_equals_int (height, 720);
+
+      gst_event_unref (event);
+      break;
+    }
+
+    gst_event_unref (event);
+  }
+
+  gst_harness_teardown (h);
+}
+
+GST_END_TEST;
 
 static Suite *
 h265parse_harnessed_suite (void)
@@ -1086,6 +1213,8 @@ h265parse_harnessed_suite (void)
   tcase_add_test (tc_chain, test_parse_sc_with_half_header);
 
   tcase_add_test (tc_chain, test_drain);
+
+  tcase_add_test (tc_chain, test_invalid_sei_in_hvcc);
 
   return s;
 }

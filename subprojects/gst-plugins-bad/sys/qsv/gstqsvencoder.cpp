@@ -27,7 +27,6 @@
 #include <string>
 
 #ifdef G_OS_WIN32
-#include <gst/d3d11/gstd3d11.h>
 #include "gstqsvallocator_d3d11.h"
 
 #include <wrl.h>
@@ -36,20 +35,41 @@
 using namespace Microsoft::WRL;
 /* *INDENT-ON* */
 #else
-#include <gst/va/gstvadisplay_drm.h>
 #include "gstqsvallocator_va.h"
 #endif /* G_OS_WIN32 */
 
-GST_DEBUG_CATEGORY_EXTERN (gst_qsv_encoder_debug);
+GST_DEBUG_CATEGORY_STATIC (gst_qsv_encoder_debug);
 #define GST_CAT_DEFAULT gst_qsv_encoder_debug
 
+/**
+ * GstQsvCodingOption:
+ *
+ * Since: 1.22
+ */
 GType
 gst_qsv_coding_option_get_type (void)
 {
   static GType coding_opt_type = 0;
   static const GEnumValue coding_opts[] = {
+    /**
+     * GstQsvCodingOption::unknown:
+     *
+     * Since: 1.22
+     */
     {MFX_CODINGOPTION_UNKNOWN, "Unknown", "unknown"},
+
+    /**
+     * GstQsvCodingOption::on:
+     *
+     * Since: 1.22
+     */
     {MFX_CODINGOPTION_ON, "On", "on"},
+
+    /**
+     * GstQsvCodingOption::off:
+     *
+     * Since: 1.22
+     */
     {MFX_CODINGOPTION_OFF, "Off", "off"},
     {0, nullptr, nullptr}
   };
@@ -66,6 +86,8 @@ gst_qsv_coding_option_get_type (void)
 enum
 {
   PROP_0,
+  PROP_ADAPTER_LUID,
+  PROP_DEVICE_PATH,
   PROP_TARGET_USAGE,
   PROP_LOW_LATENCY,
 };
@@ -130,9 +152,18 @@ struct _GstQsvEncoderPrivate
   gboolean low_latency;
 };
 
+/**
+ * GstQsvEncoder:
+ *
+ * Base class for Intel Quick Sync video encoders
+ *
+ * Since: 1.22
+ */
 #define gst_qsv_encoder_parent_class parent_class
-G_DEFINE_ABSTRACT_TYPE_WITH_PRIVATE (GstQsvEncoder, gst_qsv_encoder,
-    GST_TYPE_VIDEO_ENCODER);
+G_DEFINE_ABSTRACT_TYPE_WITH_CODE (GstQsvEncoder, gst_qsv_encoder,
+    GST_TYPE_VIDEO_ENCODER, G_ADD_PRIVATE (GstQsvEncoder);
+    GST_DEBUG_CATEGORY_INIT (gst_qsv_encoder_debug,
+        "qsvencoder", 0, "qsvencoder"));
 
 static void gst_qsv_encoder_dispose (GObject * object);
 static void gst_qsv_encoder_finalize (GObject * object);
@@ -169,11 +200,25 @@ gst_qsv_encoder_class_init (GstQsvEncoderClass * klass)
   GObjectClass *object_class = G_OBJECT_CLASS (klass);
   GstElementClass *element_class = GST_ELEMENT_CLASS (klass);
   GstVideoEncoderClass *videoenc_class = GST_VIDEO_ENCODER_CLASS (klass);
+  GParamFlags param_flags = (GParamFlags) (GST_PARAM_DOC_SHOW_DEFAULT |
+      GST_PARAM_CONDITIONALLY_AVAILABLE | G_PARAM_READABLE |
+      G_PARAM_STATIC_STRINGS);
 
   object_class->dispose = gst_qsv_encoder_dispose;
   object_class->finalize = gst_qsv_encoder_finalize;
   object_class->set_property = gst_qsv_encoder_set_property;
   object_class->get_property = gst_qsv_encoder_get_property;
+
+#ifdef G_OS_WIN32
+  g_object_class_install_property (object_class, PROP_ADAPTER_LUID,
+      g_param_spec_int64 ("adapter-luid", "Adapter LUID",
+          "DXGI Adapter LUID (Locally Unique Identifier) of created device",
+          G_MININT64, G_MAXINT64, 0, param_flags));
+#else
+  g_object_class_install_property (object_class, PROP_DEVICE_PATH,
+      g_param_spec_string ("device-path", "Device Path",
+          "DRM device path", nullptr, param_flags));
+#endif
 
   g_object_class_install_property (object_class, PROP_TARGET_USAGE,
       g_param_spec_uint ("target-usage", "Target Usage",
@@ -200,6 +245,10 @@ gst_qsv_encoder_class_init (GstQsvEncoderClass * klass)
   videoenc_class->src_query = GST_DEBUG_FUNCPTR (gst_qsv_encoder_src_query);
   videoenc_class->propose_allocation =
       GST_DEBUG_FUNCPTR (gst_qsv_encoder_propose_allocation);
+
+  gst_type_mark_as_plugin_api (GST_TYPE_QSV_ENCODER, (GstPluginAPIFlags) 0);
+  gst_type_mark_as_plugin_api (GST_TYPE_QSV_CODING_OPTION,
+      (GstPluginAPIFlags) 0);
 }
 
 static void
@@ -277,8 +326,15 @@ gst_qsv_encoder_get_property (GObject * object, guint prop_id, GValue * value,
 {
   GstQsvEncoder *self = GST_QSV_ENCODER (object);
   GstQsvEncoderPrivate *priv = self->priv;
+  GstQsvEncoderClass *klass = GST_QSV_ENCODER_GET_CLASS (self);
 
   switch (prop_id) {
+    case PROP_ADAPTER_LUID:
+      g_value_set_int64 (value, klass->adapter_luid);
+      break;
+    case PROP_DEVICE_PATH:
+      g_value_set_string (value, klass->display_path);
+      break;
     case PROP_TARGET_USAGE:
       g_value_set_uint (value, priv->target_usage);
       break;
@@ -294,13 +350,16 @@ gst_qsv_encoder_get_property (GObject * object, guint prop_id, GValue * value,
 static void
 gst_qsv_encoder_set_context (GstElement * element, GstContext * context)
 {
-#ifdef G_OS_WIN32
   GstQsvEncoder *self = GST_QSV_ENCODER (element);
   GstQsvEncoderClass *klass = GST_QSV_ENCODER_GET_CLASS (element);
   GstQsvEncoderPrivate *priv = self->priv;
 
+#ifdef G_OS_WIN32
   gst_d3d11_handle_set_context_for_adapter_luid (element,
       context, klass->adapter_luid, (GstD3D11Device **) & priv->device);
+#else
+  gst_va_handle_set_context (element, context, klass->display_path,
+      (GstVaDisplay **) & priv->device);
 #endif
 
   GST_ELEMENT_CLASS (parent_class)->set_context (element, context);
@@ -377,18 +436,13 @@ gst_qsv_encoder_open_platform_device (GstQsvEncoder * self)
   mfxStatus status;
   GstVaDisplay *display;
 
-  /* GstVADisplay context sharing is not public yet (VA plugin internal) */
-  if (!priv->device) {
-    display = gst_va_display_drm_new_from_path (klass->display_path);
-    if (!display) {
-      GST_ERROR_OBJECT (self, "VA display is unavailable");
-      return FALSE;
-    }
-
-    priv->device = GST_OBJECT (display);
-  } else {
-    display = GST_VA_DISPLAY (priv->device);
+  if (!gst_va_ensure_element_data (GST_ELEMENT (self), klass->display_path,
+          (GstVaDisplay **) & priv->device)) {
+    GST_ERROR_OBJECT (self, "VA display is unavailable");
+    return FALSE;
   }
+
+  display = GST_VA_DISPLAY (priv->device);
 
   priv->allocator = gst_qsv_va_allocator_new (display);
 
@@ -455,7 +509,6 @@ gst_qsv_encoder_reset (GstQsvEncoder * self)
   g_array_set_size (priv->task_pool, 0);
   g_queue_clear (&priv->free_tasks);
   g_queue_clear (&priv->pending_tasks);
-  g_clear_pointer (&priv->input_state, gst_video_codec_state_unref);
 
   return TRUE;
 }
@@ -464,8 +517,12 @@ static gboolean
 gst_qsv_encoder_stop (GstVideoEncoder * encoder)
 {
   GstQsvEncoder *self = GST_QSV_ENCODER (encoder);
+  GstQsvEncoderPrivate *priv = self->priv;
 
-  return gst_qsv_encoder_reset (self);
+  gst_qsv_encoder_reset (self);
+  g_clear_pointer (&priv->input_state, gst_video_codec_state_unref);
+
+  return TRUE;
 }
 
 static gboolean
@@ -703,8 +760,8 @@ gst_qsv_encoder_finish_frame (GstQsvEncoder * self, GstQsvEncoderTask * task,
   mfxStatus status;
   mfxBitstream *bs;
   GstVideoCodecFrame *frame;
-  GstClockTime pts = GST_CLOCK_TIME_NONE;
-  GstClockTime dts = GST_CLOCK_TIME_NONE;
+  GstClockTime qsv_pts = GST_CLOCK_TIME_NONE;
+  GstClockTime qsv_dts = GST_CLOCK_TIME_NONE;
   GstBuffer *buffer;
   gboolean keyframe = FALSE;
   guint retry_count = 0;
@@ -749,8 +806,19 @@ gst_qsv_encoder_finish_frame (GstQsvEncoder * self, GstQsvEncoderTask * task,
   }
 
   bs = &task->bitstream;
-  pts = gst_qsv_timestamp_to_gst (bs->TimeStamp);
-  dts = gst_qsv_timestamp_to_gst ((mfxU64) bs->DecodeTimeStamp);
+  qsv_pts = gst_qsv_timestamp_to_gst (bs->TimeStamp);
+
+  /* SDK runtime seems to report zero DTS for all fraems in case of VP9.
+   * It sounds SDK bug, but we can workaround it safely because VP9 B-frame is
+   * not supported in this implementation.
+   *
+   * Also we perfer our nanoseconds timestamp instead of QSV's timescale.
+   * So let' ignore QSV's timescale for non-{h264,h265} cases.
+   *
+   * TODO: We may need to use DTS for MPEG2 (not implemented yet)
+   */
+  if (klass->codec_id == MFX_CODEC_AVC || klass->codec_id == MFX_CODEC_HEVC)
+    qsv_dts = gst_qsv_timestamp_to_gst ((mfxU64) bs->DecodeTimeStamp);
 
   if ((bs->FrameType & MFX_FRAMETYPE_IDR) != 0)
     keyframe = TRUE;
@@ -767,10 +835,15 @@ gst_qsv_encoder_finish_frame (GstQsvEncoder * self, GstQsvEncoderTask * task,
     return GST_FLOW_ERROR;
   }
 
-  frame = gst_qsv_encoder_find_output_frame (self, pts);
+  frame = gst_qsv_encoder_find_output_frame (self, qsv_pts);
   if (frame) {
-    frame->pts = pts;
-    frame->dts = dts;
+    if (GST_CLOCK_TIME_IS_VALID (qsv_dts)) {
+      frame->pts = qsv_pts;
+      frame->dts = qsv_dts;
+    } else {
+      frame->dts = frame->pts;
+    }
+
     frame->output_buffer = buffer;
 
     if (keyframe)
@@ -782,8 +855,11 @@ gst_qsv_encoder_finish_frame (GstQsvEncoder * self, GstQsvEncoderTask * task,
   /* Empty available frame, something went wrong but we can just push this
    * buffer */
   GST_WARNING_OBJECT (self, "Failed to find corresponding frame");
-  GST_BUFFER_PTS (buffer) = pts;
-  GST_BUFFER_DTS (buffer) = dts;
+  GST_BUFFER_PTS (buffer) = qsv_pts;
+  if (GST_CLOCK_TIME_IS_VALID (qsv_dts))
+    GST_BUFFER_DTS (buffer) = qsv_dts;
+  else
+    GST_BUFFER_DTS (buffer) = qsv_pts;
 
   if (!keyframe)
     GST_BUFFER_FLAG_SET (buffer, GST_BUFFER_FLAG_DELTA_UNIT);
@@ -854,13 +930,25 @@ gst_qsv_encoder_prepare_d3d11_pool (GstQsvEncoder * self,
   GstStructure *config;
   GstD3D11AllocationParams *params;
   GstD3D11Device *device = GST_D3D11_DEVICE_CAST (priv->device);
+  guint bind_flags = 0;
+  GstD3D11Format device_format;
 
-  GST_DEBUG_OBJECT (self, "Use d3d11 memory pool");
+  gst_d3d11_device_get_format (device, GST_VIDEO_INFO_FORMAT (aligned_info),
+      &device_format);
+  if ((device_format.format_support[0] & D3D11_FORMAT_SUPPORT_RENDER_TARGET) ==
+      D3D11_FORMAT_SUPPORT_RENDER_TARGET) {
+    /* XXX: workaround for greenish artifacts
+     * https://gitlab.freedesktop.org/gstreamer/gstreamer/-/issues/1238
+     * bind to render target so that d3d11 memory allocator can clear texture
+     * with black color */
+    bind_flags = D3D11_BIND_RENDER_TARGET;
+  }
 
   priv->internal_pool = gst_d3d11_buffer_pool_new (device);
   config = gst_buffer_pool_get_config (priv->internal_pool);
   params = gst_d3d11_allocation_params_new (device, aligned_info,
-      (GstD3D11AllocationFlags) 0, 0);
+      GST_D3D11_ALLOCATION_FLAG_DEFAULT, bind_flags,
+      D3D11_RESOURCE_MISC_SHARED);
 
   gst_buffer_pool_config_set_d3d11_allocation_params (config, params);
   gst_d3d11_allocation_params_free (params);
@@ -871,35 +959,57 @@ gst_qsv_encoder_prepare_d3d11_pool (GstQsvEncoder * self,
 
   return TRUE;
 }
-#endif
-
+#else
 static gboolean
-gst_qsv_encoder_prepare_system_pool (GstQsvEncoder * self,
+gst_qsv_encoder_prepare_va_pool (GstQsvEncoder * self,
     GstCaps * caps, GstVideoInfo * aligned_info)
 {
   GstQsvEncoderPrivate *priv = self->priv;
+  GstAllocator *allocator;
   GstStructure *config;
+  GArray *formats;
+  GstAllocationParams params;
+  GstVaDisplay *display = GST_VA_DISPLAY (priv->device);
 
-  GST_DEBUG_OBJECT (self, "Use system memory pool");
+  formats = g_array_new (FALSE, FALSE, sizeof (GstVideoFormat));
+  g_array_append_val (formats, GST_VIDEO_INFO_FORMAT (aligned_info));
 
-  priv->internal_pool = gst_video_buffer_pool_new ();
+  allocator = gst_va_allocator_new (display, formats);
+  if (!allocator) {
+    GST_ERROR_OBJECT (self, "Failed to create allocator");
+    return FALSE;
+  }
+
+  gst_allocation_params_init (&params);
+
+  priv->internal_pool = gst_va_pool_new_with_config (caps,
+      GST_VIDEO_INFO_SIZE (aligned_info), 0, 0,
+      VA_SURFACE_ATTRIB_USAGE_HINT_GENERIC, GST_VA_FEATURE_AUTO,
+      allocator, &params);
+  gst_object_unref (allocator);
+
+
+  if (!priv->internal_pool) {
+    GST_ERROR_OBJECT (self, "Failed to create va pool");
+    return FALSE;
+  }
+
   config = gst_buffer_pool_get_config (priv->internal_pool);
-  caps = gst_video_info_to_caps (aligned_info);
   gst_buffer_pool_config_add_option (config, GST_BUFFER_POOL_OPTION_VIDEO_META);
-  gst_buffer_pool_config_set_params (config,
-      caps, GST_VIDEO_INFO_SIZE (aligned_info), 0, 0);
-
+  gst_buffer_pool_config_set_params (config, caps,
+      GST_VIDEO_INFO_SIZE (aligned_info), 0, 0);
   gst_buffer_pool_set_config (priv->internal_pool, config);
   gst_buffer_pool_set_active (priv->internal_pool, TRUE);
 
   return TRUE;
 }
+#endif
 
 /* Prepare internal pool, which is used to allocate fallback buffer
  * when upstream buffer is not directly accessible by QSV */
 static gboolean
 gst_qsv_encoder_prepare_pool (GstQsvEncoder * self, GstCaps * caps,
-    GstVideoInfo * aligned_info, mfxU16 * io_pattern)
+    GstVideoInfo * aligned_info)
 {
   GstQsvEncoderPrivate *priv = self->priv;
   gboolean ret = FALSE;
@@ -912,34 +1022,24 @@ gst_qsv_encoder_prepare_pool (GstQsvEncoder * self, GstCaps * caps,
 
   aligned_caps = gst_video_info_to_caps (aligned_info);
 
-  /* TODO: Add Linux video memory (VA/DMABuf) support */
 #ifdef G_OS_WIN32
-  priv->mem_type = GST_QSV_VIDEO_MEMORY;
-  *io_pattern = MFX_IOPATTERN_IN_VIDEO_MEMORY;
-
   ret = gst_qsv_encoder_prepare_d3d11_pool (self, aligned_caps, aligned_info);
+#else
+  ret = gst_qsv_encoder_prepare_va_pool (self, aligned_caps, aligned_info);
 #endif
 
-  if (!ret) {
-    priv->mem_type = GST_QSV_SYSTEM_MEMORY;
-    *io_pattern = MFX_IOPATTERN_IN_SYSTEM_MEMORY;
-
-    ret = gst_qsv_encoder_prepare_system_pool (self,
-        aligned_caps, aligned_info);
-  }
   gst_caps_unref (aligned_caps);
 
   return ret;
 }
 
 static gboolean
-gst_qsv_encoder_set_format (GstVideoEncoder * encoder,
-    GstVideoCodecState * state)
+gst_qsv_encoder_init_encode_session (GstQsvEncoder * self)
 {
-  GstQsvEncoder *self = GST_QSV_ENCODER (encoder);
   GstQsvEncoderPrivate *priv = self->priv;
   GstQsvEncoderClass *klass = GST_QSV_ENCODER_GET_CLASS (self);
-  GstVideoInfo *info;
+  GstVideoInfo *info = &priv->input_state->info;
+  GstCaps *caps = priv->input_state->caps;
   mfxVideoParam param;
   mfxFrameInfo *frame_info;
   mfxFrameAllocRequest alloc_request;
@@ -952,10 +1052,6 @@ gst_qsv_encoder_set_format (GstVideoEncoder * encoder,
 
   gst_qsv_encoder_drain (self, FALSE);
   gst_qsv_encoder_reset (self);
-
-  priv->input_state = gst_video_codec_state_ref (state);
-
-  info = &priv->input_state->info;
 
   encoder_handle = new MFXVideoENCODE (priv->session);
 
@@ -983,22 +1079,13 @@ gst_qsv_encoder_set_format (GstVideoEncoder * encoder,
       GST_VIDEO_INFO_FORMAT (info), GST_VIDEO_INFO_INTERLACE_MODE (info),
       frame_info->Width, frame_info->Height);
 
-  if (!gst_qsv_encoder_prepare_pool (self, state->caps, &priv->aligned_info,
-          &param.IOPattern)) {
+  /* Always video memory, even when upstream is non-hardware element */
+  priv->mem_type = GST_QSV_VIDEO_MEMORY | GST_QSV_ENCODER_IN_MEMORY;
+  param.IOPattern = MFX_IOPATTERN_IN_VIDEO_MEMORY;
+  if (!gst_qsv_encoder_prepare_pool (self, caps, &priv->aligned_info)) {
     GST_ERROR_OBJECT (self, "Failed to prepare pool");
     goto error;
   }
-
-#define CHECK_STATUS(s,func) G_STMT_START { \
-  if (s < MFX_ERR_NONE) { \
-    GST_ERROR_OBJECT (self, G_STRINGIFY (func) " failed %d (%s)", \
-        QSV_STATUS_ARGS (s)); \
-    goto error; \
-  } else if (status != MFX_ERR_NONE) { \
-    GST_WARNING_OBJECT (self, G_STRINGIFY (func) " returned warning %d (%s)", \
-        QSV_STATUS_ARGS (s)); \
-  } \
-} G_STMT_END
 
   status = encoder_handle->Query (&param, &param);
   /* If device is unhappy with LowPower = OFF, try again with unknown */
@@ -1006,21 +1093,18 @@ gst_qsv_encoder_set_format (GstVideoEncoder * encoder,
     GST_INFO_OBJECT (self, "LowPower - OFF returned %d (%s)",
         QSV_STATUS_ARGS (status));
     param.mfx.LowPower = MFX_CODINGOPTION_UNKNOWN;
+    status = encoder_handle->Query (&param, &param);
   }
-
-  status = encoder_handle->Query (&param, &param);
-  CHECK_STATUS (status, MFXVideoENCODE::Query);
+  QSV_CHECK_STATUS (self, status, MFXVideoENCODE::Query);
 
   status = encoder_handle->QueryIOSurf (&param, &alloc_request);
-  CHECK_STATUS (status, MFXVideoENCODE::QueryIOSurf);
+  QSV_CHECK_STATUS (self, status, MFXVideoENCODE::QueryIOSurf);
 
   status = encoder_handle->Init (&param);
-  CHECK_STATUS (status, MFXVideoENCODE::Init);
+  QSV_CHECK_STATUS (self, status, MFXVideoENCODE::Init);
 
   status = encoder_handle->GetVideoParam (&param);
-  CHECK_STATUS (status, MFXVideoENCODE::GetVideoParam);
-
-#undef CHECK_STATUS
+  QSV_CHECK_STATUS (self, status, MFXVideoENCODE::GetVideoParam);
 
   GST_DEBUG_OBJECT (self, "NumFrameSuggested: %d, AsyncDepth %d",
       alloc_request.NumFrameSuggested, param.AsyncDepth);
@@ -1047,8 +1131,26 @@ gst_qsv_encoder_set_format (GstVideoEncoder * encoder,
   priv->next_surface_index = 0;
 
   g_array_set_size (priv->task_pool, param.AsyncDepth);
-  bitstream_size =
-      (guint) param.mfx.BufferSizeInKB * param.mfx.BRCParamMultiplier * 1024;
+  if (klass->codec_id == MFX_CODEC_JPEG) {
+    gdouble factor = 4.0;
+
+    /* jpeg zero returns buffer size */
+    switch (GST_VIDEO_INFO_FORMAT (info)) {
+      case GST_VIDEO_FORMAT_NV12:
+        factor = 1.5;
+        break;
+      case GST_VIDEO_FORMAT_YUY2:
+        factor = 2.0;
+        break;
+      default:
+        break;
+    }
+    bitstream_size = (guint)
+        (factor * GST_VIDEO_INFO_WIDTH (info) * GST_VIDEO_INFO_HEIGHT (info));
+  } else {
+    bitstream_size =
+        (guint) param.mfx.BufferSizeInKB * param.mfx.BRCParamMultiplier * 1024;
+  }
 
   for (guint i = 0; i < priv->task_pool->len; i++) {
     GstQsvEncoderTask *task = &g_array_index (priv->task_pool,
@@ -1061,13 +1163,17 @@ gst_qsv_encoder_set_format (GstVideoEncoder * encoder,
   }
 
   min_delay_frames = priv->task_pool->len;
-  max_delay_frames = priv->surface_pool->len + min_delay_frames;
+  /* takes the number of bframes into account */
+  if (param.mfx.GopRefDist > 1)
+    min_delay_frames += (param.mfx.GopRefDist - 1);
+  max_delay_frames = priv->surface_pool->len + priv->task_pool->len;
 
   min_latency = gst_util_uint64_scale (min_delay_frames * GST_SECOND,
       param.mfx.FrameInfo.FrameRateExtD, param.mfx.FrameInfo.FrameRateExtN);
   max_latency = gst_util_uint64_scale (max_delay_frames * GST_SECOND,
       param.mfx.FrameInfo.FrameRateExtD, param.mfx.FrameInfo.FrameRateExtN);
-  gst_video_encoder_set_latency (encoder, min_latency, max_latency);
+  gst_video_encoder_set_latency (GST_VIDEO_ENCODER (self),
+      min_latency, max_latency);
 
   priv->video_param = param;
   priv->encoder = encoder_handle;
@@ -1081,6 +1187,57 @@ error:
   gst_qsv_encoder_reset (self);
 
   return FALSE;
+}
+
+static gboolean
+gst_qsv_encoder_reset_encode_session (GstQsvEncoder * self)
+{
+  GstQsvEncoderPrivate *priv = self->priv;
+  GPtrArray *extra_params = priv->extra_params;
+  mfxStatus status;
+  mfxExtEncoderResetOption reset_opt;
+
+  if (!priv->encoder) {
+    GST_WARNING_OBJECT (self, "Encoder was not configured");
+    return gst_qsv_encoder_init_encode_session (self);
+  }
+
+  reset_opt.Header.BufferId = MFX_EXTBUFF_ENCODER_RESET_OPTION;
+  reset_opt.Header.BufferSz = sizeof (mfxExtEncoderResetOption);
+  reset_opt.StartNewSequence = MFX_CODINGOPTION_OFF;
+
+  gst_qsv_encoder_drain (self, FALSE);
+
+  g_ptr_array_add (extra_params, &reset_opt);
+  priv->video_param.ExtParam = (mfxExtBuffer **) extra_params->pdata;
+  priv->video_param.NumExtParam = extra_params->len;
+
+  status = priv->encoder->Reset (&priv->video_param);
+  g_ptr_array_remove_index (extra_params, extra_params->len - 1);
+  priv->video_param.NumExtParam = extra_params->len;
+
+  if (status != MFX_ERR_NONE) {
+    GST_WARNING_OBJECT (self, "MFXVideoENCODE_Reset returned %d (%s)",
+        QSV_STATUS_ARGS (status));
+    return gst_qsv_encoder_init_encode_session (self);
+  }
+
+  GST_DEBUG_OBJECT (self, "Encode session reset done");
+
+  return TRUE;
+}
+
+static gboolean
+gst_qsv_encoder_set_format (GstVideoEncoder * encoder,
+    GstVideoCodecState * state)
+{
+  GstQsvEncoder *self = GST_QSV_ENCODER (encoder);
+  GstQsvEncoderPrivate *priv = self->priv;
+
+  g_clear_pointer (&priv->input_state, gst_video_codec_state_unref);
+  priv->input_state = gst_video_codec_state_ref (state);
+
+  return gst_qsv_encoder_init_encode_session (self);
 }
 
 static mfxU16
@@ -1139,32 +1296,29 @@ gst_qsv_encoder_handle_frame (GstVideoEncoder * encoder,
   mfxU64 timestamp;
   mfxStatus status;
 
-  if (klass->check_reconfigure) {
+  if (klass->check_reconfigure && priv->encoder) {
     GstQsvEncoderReconfigure reconfigure;
 
-    reconfigure = klass->check_reconfigure (self, &priv->video_param);
+    reconfigure = klass->check_reconfigure (self, priv->session,
+        &priv->video_param, priv->extra_params);
+
     switch (reconfigure) {
       case GST_QSV_ENCODER_RECONFIGURE_BITRATE:
-        /* TODO: In case of bitrate change, we can query whether we need to
-         * start from a new sequence or soft-reset is possible
-         * via MFXVideoENCODE_Query() with mfxExtEncoderResetOption struct,
-         * and then if soft-reset is allowed, we can avoid inefficient full-reset
-         * (including IDR insertion) by using MFXVideoENCODE_Reset() */
-        /* fallthrough */
-      case GST_QSV_ENCODER_RECONFIGURE_FULL:
-      {
-        GstVideoCodecState *state =
-            gst_video_codec_state_ref (priv->input_state);
-        gboolean rst;
+        if (!gst_qsv_encoder_reset_encode_session (self)) {
+          GST_ERROR_OBJECT (self, "Failed to reset session");
+          gst_video_encoder_finish_frame (encoder, frame);
 
-        GST_INFO_OBJECT (self, "Configure encoder again");
-        rst = gst_qsv_encoder_set_format (encoder, state);
-        gst_video_codec_state_unref (state);
-
-        if (!rst)
-          return GST_FLOW_NOT_NEGOTIATED;
+          return GST_FLOW_ERROR;
+        }
         break;
-      }
+      case GST_QSV_ENCODER_RECONFIGURE_FULL:
+        if (!gst_qsv_encoder_init_encode_session (self)) {
+          GST_ERROR_OBJECT (self, "Failed to init session");
+          gst_video_encoder_finish_frame (encoder, frame);
+
+          return GST_FLOW_ERROR;
+        }
+        break;
       default:
         break;
     }
@@ -1172,6 +1326,8 @@ gst_qsv_encoder_handle_frame (GstVideoEncoder * encoder,
 
   if (!priv->encoder) {
     GST_ERROR_OBJECT (self, "Encoder object was not configured");
+    gst_video_encoder_finish_frame (encoder, frame);
+
     return GST_FLOW_NOT_NEGOTIATED;
   }
 
@@ -1186,7 +1342,9 @@ gst_qsv_encoder_handle_frame (GstVideoEncoder * encoder,
 
   surface->qsv_frame =
       gst_qsv_allocator_acquire_frame (priv->allocator, priv->mem_type,
-      &priv->input_state->info, frame->input_buffer, priv->internal_pool);
+      &priv->input_state->info, gst_buffer_ref (frame->input_buffer),
+      priv->internal_pool);
+
   if (!surface->qsv_frame) {
     GST_ERROR_OBJECT (self, "Failed to wrap buffer with qsv frame");
     gst_qsv_encoder_task_reset (self, task);
@@ -1265,14 +1423,15 @@ gst_qsv_encoder_flush (GstVideoEncoder * encoder)
 static gboolean
 gst_qsv_encoder_handle_context_query (GstQsvEncoder * self, GstQuery * query)
 {
-#ifdef G_OS_WIN32
   GstQsvEncoderPrivate *priv = self->priv;
 
+#ifdef G_OS_WIN32
   return gst_d3d11_handle_context_query (GST_ELEMENT (self), query,
       (GstD3D11Device *) priv->device);
+#else
+  return gst_va_handle_context_query (GST_ELEMENT (self), query,
+      (GstVaDisplay *) priv->device);
 #endif
-
-  return FALSE;
 }
 
 static gboolean
@@ -1342,7 +1501,7 @@ gst_qsv_encoder_propose_allocation (GstVideoEncoder * encoder, GstQuery * query)
     pool = gst_d3d11_buffer_pool_new (device);
     is_d3d11 = TRUE;
   } else {
-    pool = gst_d3d11_staging_buffer_pool_new (device);
+    pool = gst_video_buffer_pool_new ();
   }
 
   config = gst_buffer_pool_get_config (pool);
@@ -1363,11 +1522,14 @@ gst_qsv_encoder_propose_allocation (GstVideoEncoder * encoder, GstQuery * query)
         GST_VIDEO_INFO_HEIGHT (&info);
 
     d3d11_params = gst_d3d11_allocation_params_new (device, &info,
-        (GstD3D11AllocationFlags) 0, 0);
+        GST_D3D11_ALLOCATION_FLAG_DEFAULT, 0, 0);
 
     gst_d3d11_allocation_params_alignment (d3d11_params, &align);
     gst_buffer_pool_config_set_d3d11_allocation_params (config, d3d11_params);
     gst_d3d11_allocation_params_free (d3d11_params);
+  } else {
+    gst_buffer_pool_config_add_option (config,
+        GST_BUFFER_POOL_OPTION_VIDEO_ALIGNMENT);
   }
 
   size = GST_VIDEO_INFO_SIZE (&info);
@@ -1394,18 +1556,20 @@ gst_qsv_encoder_propose_allocation (GstVideoEncoder * encoder, GstQuery * query)
   return TRUE;
 }
 #else
-/* TODO: Add support VA/DMABuf */
 static gboolean
 gst_qsv_encoder_propose_allocation (GstVideoEncoder * encoder, GstQuery * query)
 {
   GstQsvEncoder *self = GST_QSV_ENCODER (encoder);
   GstQsvEncoderPrivate *priv = self->priv;
   GstVideoInfo info;
+  GstAllocator *allocator = nullptr;
   GstBufferPool *pool;
   GstCaps *caps;
   guint size;
   GstStructure *config;
   GstVideoAlignment align;
+  GstAllocationParams params;
+  GArray *formats;
 
   gst_query_parse_allocation (query, &caps, nullptr);
   if (!caps) {
@@ -1418,7 +1582,28 @@ gst_qsv_encoder_propose_allocation (GstVideoEncoder * encoder, GstQuery * query)
     return FALSE;
   }
 
-  pool = gst_video_buffer_pool_new ();
+  gst_allocation_params_init (&params);
+
+  formats = g_array_new (FALSE, FALSE, sizeof (GstVideoFormat));
+  g_array_append_val (formats, GST_VIDEO_INFO_FORMAT (&info));
+
+  allocator = gst_va_allocator_new (GST_VA_DISPLAY (priv->device), formats);
+  if (!allocator) {
+    GST_ERROR_OBJECT (self, "Failed to create allocator");
+    return FALSE;
+  }
+
+  pool = gst_va_pool_new_with_config (caps,
+      GST_VIDEO_INFO_SIZE (&info), priv->surface_pool->len, 0,
+      VA_SURFACE_ATTRIB_USAGE_HINT_GENERIC, GST_VA_FEATURE_AUTO,
+      allocator, &params);
+
+  if (!pool) {
+    GST_ERROR_OBJECT (self, "Failed to create va pool");
+    gst_object_unref (allocator);
+
+    return FALSE;
+  }
 
   gst_video_alignment_reset (&align);
   align.padding_right = GST_VIDEO_INFO_WIDTH (&priv->aligned_info) -
@@ -1430,21 +1615,29 @@ gst_qsv_encoder_propose_allocation (GstVideoEncoder * encoder, GstQuery * query)
   gst_buffer_pool_config_add_option (config, GST_BUFFER_POOL_OPTION_VIDEO_META);
   gst_buffer_pool_config_add_option (config,
       GST_BUFFER_POOL_OPTION_VIDEO_ALIGNMENT);
-  gst_video_info_align (&info, &align);
   gst_buffer_pool_config_set_video_alignment (config, &align);
 
-  size = GST_VIDEO_INFO_SIZE (&info);
   gst_buffer_pool_config_set_params (config,
-      caps, size, priv->surface_pool->len, 0);
+      caps, GST_VIDEO_INFO_SIZE (&info), priv->surface_pool->len, 0);
 
   if (!gst_buffer_pool_set_config (pool, config)) {
-    GST_WARNING_OBJECT (self, "Failed to set pool config");
+    GST_ERROR_OBJECT (self, "Failed to set pool config");
+    gst_clear_object (&allocator);
     gst_object_unref (pool);
     return FALSE;
   }
 
+  if (allocator)
+    gst_query_add_allocation_param (query, allocator, &params);
+
+  config = gst_buffer_pool_get_config (pool);
+  gst_buffer_pool_config_get_params (config, nullptr, &size, nullptr, nullptr);
+  gst_structure_free (config);
+
   gst_query_add_allocation_pool (query, pool, size, priv->surface_pool->len, 0);
   gst_query_add_allocation_meta (query, GST_VIDEO_META_API_TYPE, nullptr);
+
+  gst_clear_object (&allocator);
   gst_object_unref (pool);
 
   return TRUE;

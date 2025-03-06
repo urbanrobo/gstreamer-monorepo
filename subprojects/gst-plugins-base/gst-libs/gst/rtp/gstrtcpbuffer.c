@@ -109,8 +109,7 @@ gst_rtcp_buffer_validate_data_internal (guint8 * data, guint len,
   if (G_UNLIKELY (header_mask != GST_RTCP_VALID_VALUE))
     goto wrong_mask;
 
-  /* no padding when mask succeeds */
-  padding = FALSE;
+  padding = data[0] & 0x20;
 
   /* store len */
   data_len = len;
@@ -129,7 +128,7 @@ gst_rtcp_buffer_validate_data_internal (guint8 * data, guint len,
     if (data_len < 4)
       break;
 
-    /* padding only allowed on last packet */
+    /* Version already checked for first packet through mask */
     if (padding)
       break;
 
@@ -1864,7 +1863,7 @@ gst_rtcp_packet_bye_get_reason_len (GstRTCPPacket * packet)
  *
  * Get the reason in @packet.
  *
- * Returns: The reason for the BYE @packet or NULL if the packet did not contain
+ * Returns: (nullable): The reason for the BYE @packet or NULL if the packet did not contain
  * a reason string. The string must be freed with g_free() after usage.
  */
 gchar *

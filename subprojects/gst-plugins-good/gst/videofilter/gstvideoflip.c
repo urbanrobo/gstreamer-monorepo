@@ -22,7 +22,7 @@
 
 /*
  * This file was (probably) generated from gstvideoflip.c,
- * gstvideoflip.c,v 1.7 2003/11/08 02:48:59 dschleef Exp 
+ * gstvideoflip.c,v 1.7 2003/11/08 02:48:59 dschleef Exp
  */
 /**
  * SECTION:element-videoflip
@@ -68,8 +68,9 @@ GST_STATIC_PAD_TEMPLATE ("src",
     GST_PAD_ALWAYS,
     GST_STATIC_CAPS (GST_VIDEO_CAPS_MAKE ("{ AYUV, "
             "ARGB, BGRA, ABGR, RGBA, Y444, xRGB, RGBx, xBGR, BGRx, "
-            "RGB, BGR, I420, YV12, IYUV, YUY2, UYVY, YVYU, NV12, NV21, "
-            "GRAY8, GRAY16_BE, GRAY16_LE }"))
+            "RGB, BGR, I420, YV12, IYUV, YUY2, UYVY, YVYU, NV12, NV21,"
+            "GRAY8, GRAY16_BE, GRAY16_LE, I420_10LE, I420_10BE, I420_12LE, I420_12BE, "
+            "I422_10LE, I422_10BE, I422_12LE, I422_12BE, Y444_10LE, Y444_10BE, Y444_12LE, Y444_12BE }"))
     );
 
 static GstStaticPadTemplate gst_video_flip_sink_template =
@@ -78,8 +79,9 @@ GST_STATIC_PAD_TEMPLATE ("sink",
     GST_PAD_ALWAYS,
     GST_STATIC_CAPS (GST_VIDEO_CAPS_MAKE ("{ AYUV, "
             "ARGB, BGRA, ABGR, RGBA, Y444, xRGB, RGBx, xBGR, BGRx, "
-            "RGB, BGR, I420, YV12, IYUV, YUY2, UYVY, YVYU, NV12, NV21, "
-            "GRAY8, GRAY16_BE, GRAY16_LE }"))
+            "RGB, BGR, I420, YV12, IYUV, YUY2, UYVY, YVYU, NV12, NV21,"
+            "GRAY8, GRAY16_BE, GRAY16_LE, I420_10LE, I420_10BE, I420_12LE, I420_12BE, "
+            "I422_10LE, I422_10BE, I422_12LE, I422_12BE, Y444_10LE, Y444_10BE, Y444_12LE, Y444_12BE }"))
     );
 
 #define GST_TYPE_VIDEO_FLIP_METHOD (gst_video_flip_method_get_type())
@@ -422,8 +424,8 @@ gst_video_flip_planar_yuv (GstVideoFlip * videoflip, GstVideoFrame * dest,
       /* Flip V */
       s = GST_VIDEO_FRAME_PLANE_DATA (src, 2);
       d = GST_VIDEO_FRAME_PLANE_DATA (dest, 2);
-      for (y = 0; y < dest_u_height; y++) {
-        for (x = 0; x < dest_u_width; x++) {
+      for (y = 0; y < dest_v_height; y++) {
+        for (x = 0; x < dest_v_width; x++) {
           d[y * dest_v_stride + x] = s[x * src_v_stride + y];
         }
       }
@@ -463,6 +465,477 @@ gst_video_flip_planar_yuv (GstVideoFlip * videoflip, GstVideoFrame * dest,
     default:
       g_assert_not_reached ();
       break;
+  }
+}
+
+static void
+gst_video_flip_planar_yuv_16bit (GstVideoFlip * videoflip, GstVideoFrame * dest,
+    const GstVideoFrame * src)
+{
+  gint x, y;
+  guint16 const *s;
+  guint16 *d;
+  gint src_y_stride, src_u_stride, src_v_stride;
+  gint src_y_height, src_u_height, src_v_height;
+  gint src_y_width, src_u_width, src_v_width;
+  gint dest_y_stride, dest_u_stride, dest_v_stride;
+  gint dest_y_height, dest_u_height, dest_v_height;
+  gint dest_y_width, dest_u_width, dest_v_width;
+
+  /* Divide strides by 2 because we're operating on guint16's */
+  src_y_stride = GST_VIDEO_FRAME_PLANE_STRIDE (src, 0) / 2;
+  src_u_stride = GST_VIDEO_FRAME_PLANE_STRIDE (src, 1) / 2;
+  src_v_stride = GST_VIDEO_FRAME_PLANE_STRIDE (src, 2) / 2;
+
+  dest_y_stride = GST_VIDEO_FRAME_PLANE_STRIDE (dest, 0) / 2;
+  dest_u_stride = GST_VIDEO_FRAME_PLANE_STRIDE (dest, 1) / 2;
+  dest_v_stride = GST_VIDEO_FRAME_PLANE_STRIDE (dest, 2) / 2;
+
+  src_y_width = GST_VIDEO_FRAME_COMP_WIDTH (src, 0);
+  src_u_width = GST_VIDEO_FRAME_COMP_WIDTH (src, 1);
+  src_v_width = GST_VIDEO_FRAME_COMP_WIDTH (src, 2);
+
+  dest_y_width = GST_VIDEO_FRAME_COMP_WIDTH (dest, 0);
+  dest_u_width = GST_VIDEO_FRAME_COMP_WIDTH (dest, 1);
+  dest_v_width = GST_VIDEO_FRAME_COMP_WIDTH (dest, 2);
+
+  src_y_height = GST_VIDEO_FRAME_COMP_HEIGHT (src, 0);
+  src_u_height = GST_VIDEO_FRAME_COMP_HEIGHT (src, 1);
+  src_v_height = GST_VIDEO_FRAME_COMP_HEIGHT (src, 2);
+
+  dest_y_height = GST_VIDEO_FRAME_COMP_HEIGHT (dest, 0);
+  dest_u_height = GST_VIDEO_FRAME_COMP_HEIGHT (dest, 1);
+  dest_v_height = GST_VIDEO_FRAME_COMP_HEIGHT (dest, 2);
+
+  switch (videoflip->active_method) {
+    case GST_VIDEO_ORIENTATION_90R:
+      /* Flip Y */
+      s = GST_VIDEO_FRAME_PLANE_DATA (src, 0);
+      d = GST_VIDEO_FRAME_PLANE_DATA (dest, 0);
+      for (y = 0; y < dest_y_height; y++) {
+        for (x = 0; x < dest_y_width; x++) {
+          d[y * dest_y_stride + x] =
+              s[(src_y_height - 1 - x) * src_y_stride + y];
+        }
+      }
+      /* Flip U */
+      s = GST_VIDEO_FRAME_PLANE_DATA (src, 1);
+      d = GST_VIDEO_FRAME_PLANE_DATA (dest, 1);
+      for (y = 0; y < dest_u_height; y++) {
+        for (x = 0; x < dest_u_width; x++) {
+          d[y * dest_u_stride + x] =
+              s[(src_u_height - 1 - x) * src_u_stride + y];
+        }
+      }
+      /* Flip V */
+      s = GST_VIDEO_FRAME_PLANE_DATA (src, 2);
+      d = GST_VIDEO_FRAME_PLANE_DATA (dest, 2);
+      for (y = 0; y < dest_v_height; y++) {
+        for (x = 0; x < dest_v_width; x++) {
+          d[y * dest_v_stride + x] =
+              s[(src_v_height - 1 - x) * src_v_stride + y];
+        }
+      }
+      break;
+    case GST_VIDEO_ORIENTATION_90L:
+      /* Flip Y */
+      s = GST_VIDEO_FRAME_PLANE_DATA (src, 0);
+      d = GST_VIDEO_FRAME_PLANE_DATA (dest, 0);
+      for (y = 0; y < dest_y_height; y++) {
+        for (x = 0; x < dest_y_width; x++) {
+          d[y * dest_y_stride + x] =
+              s[x * src_y_stride + (src_y_width - 1 - y)];
+        }
+      }
+      /* Flip U */
+      s = GST_VIDEO_FRAME_PLANE_DATA (src, 1);
+      d = GST_VIDEO_FRAME_PLANE_DATA (dest, 1);
+      for (y = 0; y < dest_u_height; y++) {
+        for (x = 0; x < dest_u_width; x++) {
+          d[y * dest_u_stride + x] =
+              s[x * src_u_stride + (src_u_width - 1 - y)];
+        }
+      }
+      /* Flip V */
+      s = GST_VIDEO_FRAME_PLANE_DATA (src, 2);
+      d = GST_VIDEO_FRAME_PLANE_DATA (dest, 2);
+      for (y = 0; y < dest_v_height; y++) {
+        for (x = 0; x < dest_v_width; x++) {
+          d[y * dest_v_stride + x] =
+              s[x * src_v_stride + (src_v_width - 1 - y)];
+        }
+      }
+      break;
+    case GST_VIDEO_ORIENTATION_180:
+      /* Flip Y */
+      s = GST_VIDEO_FRAME_PLANE_DATA (src, 0);
+      d = GST_VIDEO_FRAME_PLANE_DATA (dest, 0);
+      for (y = 0; y < dest_y_height; y++) {
+        for (x = 0; x < dest_y_width; x++) {
+          d[y * dest_y_stride + x] =
+              s[(src_y_height - 1 - y) * src_y_stride + (src_y_width - 1 - x)];
+        }
+      }
+      /* Flip U */
+      s = GST_VIDEO_FRAME_PLANE_DATA (src, 1);
+      d = GST_VIDEO_FRAME_PLANE_DATA (dest, 1);
+      for (y = 0; y < dest_u_height; y++) {
+        for (x = 0; x < dest_u_width; x++) {
+          d[y * dest_u_stride + x] =
+              s[(src_u_height - 1 - y) * src_u_stride + (src_u_width - 1 - x)];
+        }
+      }
+      /* Flip V */
+      s = GST_VIDEO_FRAME_PLANE_DATA (src, 2);
+      d = GST_VIDEO_FRAME_PLANE_DATA (dest, 2);
+      for (y = 0; y < dest_v_height; y++) {
+        for (x = 0; x < dest_v_width; x++) {
+          d[y * dest_v_stride + x] =
+              s[(src_v_height - 1 - y) * src_v_stride + (src_v_width - 1 - x)];
+        }
+      }
+      break;
+    case GST_VIDEO_ORIENTATION_HORIZ:
+      /* Flip Y */
+      s = GST_VIDEO_FRAME_PLANE_DATA (src, 0);
+      d = GST_VIDEO_FRAME_PLANE_DATA (dest, 0);
+      for (y = 0; y < dest_y_height; y++) {
+        for (x = 0; x < dest_y_width; x++) {
+          d[y * dest_y_stride + x] =
+              s[y * src_y_stride + (src_y_width - 1 - x)];
+        }
+      }
+      /* Flip U */
+      s = GST_VIDEO_FRAME_PLANE_DATA (src, 1);
+      d = GST_VIDEO_FRAME_PLANE_DATA (dest, 1);
+      for (y = 0; y < dest_u_height; y++) {
+        for (x = 0; x < dest_u_width; x++) {
+          d[y * dest_u_stride + x] =
+              s[y * src_u_stride + (src_u_width - 1 - x)];
+        }
+      }
+      /* Flip V */
+      s = GST_VIDEO_FRAME_PLANE_DATA (src, 2);
+      d = GST_VIDEO_FRAME_PLANE_DATA (dest, 2);
+      for (y = 0; y < dest_v_height; y++) {
+        for (x = 0; x < dest_v_width; x++) {
+          d[y * dest_v_stride + x] =
+              s[y * src_v_stride + (src_v_width - 1 - x)];
+        }
+      }
+      break;
+    case GST_VIDEO_ORIENTATION_VERT:
+      /* Flip Y */
+      s = GST_VIDEO_FRAME_PLANE_DATA (src, 0);
+      d = GST_VIDEO_FRAME_PLANE_DATA (dest, 0);
+      for (y = 0; y < dest_y_height; y++) {
+        for (x = 0; x < dest_y_width; x++) {
+          d[y * dest_y_stride + x] =
+              s[(src_y_height - 1 - y) * src_y_stride + x];
+        }
+      }
+      /* Flip U */
+      s = GST_VIDEO_FRAME_PLANE_DATA (src, 1);
+      d = GST_VIDEO_FRAME_PLANE_DATA (dest, 1);
+      for (y = 0; y < dest_u_height; y++) {
+        for (x = 0; x < dest_u_width; x++) {
+          d[y * dest_u_stride + x] =
+              s[(src_u_height - 1 - y) * src_u_stride + x];
+        }
+      }
+      /* Flip V */
+      s = GST_VIDEO_FRAME_PLANE_DATA (src, 2);
+      d = GST_VIDEO_FRAME_PLANE_DATA (dest, 2);
+      for (y = 0; y < dest_v_height; y++) {
+        for (x = 0; x < dest_v_width; x++) {
+          d[y * dest_v_stride + x] =
+              s[(src_v_height - 1 - y) * src_v_stride + x];
+        }
+      }
+      break;
+    case GST_VIDEO_ORIENTATION_UL_LR:
+      /* Flip Y */
+      s = GST_VIDEO_FRAME_PLANE_DATA (src, 0);
+      d = GST_VIDEO_FRAME_PLANE_DATA (dest, 0);
+      for (y = 0; y < dest_y_height; y++) {
+        for (x = 0; x < dest_y_width; x++) {
+          d[y * dest_y_stride + x] = s[x * src_y_stride + y];
+        }
+      }
+      /* Flip U */
+      s = GST_VIDEO_FRAME_PLANE_DATA (src, 1);
+      d = GST_VIDEO_FRAME_PLANE_DATA (dest, 1);
+      for (y = 0; y < dest_u_height; y++) {
+        for (x = 0; x < dest_u_width; x++) {
+          d[y * dest_u_stride + x] = s[x * src_u_stride + y];
+        }
+      }
+      /* Flip V */
+      s = GST_VIDEO_FRAME_PLANE_DATA (src, 2);
+      d = GST_VIDEO_FRAME_PLANE_DATA (dest, 2);
+      for (y = 0; y < dest_v_height; y++) {
+        for (x = 0; x < dest_v_width; x++) {
+          d[y * dest_v_stride + x] = s[x * src_v_stride + y];
+        }
+      }
+      break;
+    case GST_VIDEO_ORIENTATION_UR_LL:
+      /* Flip Y */
+      s = GST_VIDEO_FRAME_PLANE_DATA (src, 0);
+      d = GST_VIDEO_FRAME_PLANE_DATA (dest, 0);
+      for (y = 0; y < dest_y_height; y++) {
+        for (x = 0; x < dest_y_width; x++) {
+          d[y * dest_y_stride + x] =
+              s[(src_y_height - 1 - x) * src_y_stride + (src_y_width - 1 - y)];
+        }
+      }
+      /* Flip U */
+      s = GST_VIDEO_FRAME_PLANE_DATA (src, 1);
+      d = GST_VIDEO_FRAME_PLANE_DATA (dest, 1);
+      for (y = 0; y < dest_u_height; y++) {
+        for (x = 0; x < dest_u_width; x++) {
+          d[y * dest_u_stride + x] =
+              s[(src_u_height - 1 - x) * src_u_stride + (src_u_width - 1 - y)];
+        }
+      }
+      /* Flip V */
+      s = GST_VIDEO_FRAME_PLANE_DATA (src, 2);
+      d = GST_VIDEO_FRAME_PLANE_DATA (dest, 2);
+      for (y = 0; y < dest_v_height; y++) {
+        for (x = 0; x < dest_v_width; x++) {
+          d[y * dest_v_stride + x] =
+              s[(src_v_height - 1 - x) * src_v_stride + (src_v_width - 1 - y)];
+        }
+      }
+      break;
+    case GST_VIDEO_ORIENTATION_IDENTITY:
+      gst_video_frame_copy (dest, src);
+      break;
+    default:
+      g_assert_not_reached ();
+      break;
+  }
+}
+
+static inline void
+rotate_yuv422_plane (GstVideoFrame * dest, const GstVideoFrame * src,
+    gint plane_index, GstVideoOrientationMethod method,
+    gboolean is_chroma, gboolean is_le)
+{
+  gint src_stride, src_height, src_width;
+  gint dest_stride, dest_height, dest_width;
+  gint x, y;
+  guint scale;
+  guint16 const *s, *addr;
+  guint16 *d;
+  guint16 val, val2;
+
+  s = GST_VIDEO_FRAME_PLANE_DATA (src, plane_index);
+  d = GST_VIDEO_FRAME_PLANE_DATA (dest, plane_index);
+
+  /* Divide strides by 2 because we're operating on guint16's */
+  src_stride = GST_VIDEO_FRAME_PLANE_STRIDE (src, plane_index) / 2;
+  src_height = GST_VIDEO_FRAME_COMP_HEIGHT (src, plane_index);
+  src_width = GST_VIDEO_FRAME_COMP_WIDTH (src, plane_index);
+
+  dest_stride = GST_VIDEO_FRAME_PLANE_STRIDE (dest, plane_index) / 2;
+  dest_height = GST_VIDEO_FRAME_COMP_HEIGHT (dest, plane_index);
+  dest_width = GST_VIDEO_FRAME_COMP_WIDTH (dest, plane_index);
+
+  scale = is_chroma ? 2 : 1;
+
+  switch (method) {
+    case GST_VIDEO_ORIENTATION_90R:
+      if (is_le) {
+        for (y = 0; y < dest_height; y++) {
+          for (x = 0; x < dest_width; x++) {
+            addr = s + (src_height - 1 - x * scale) * src_stride + y / scale;
+            val = GST_READ_UINT16_LE (addr);
+
+            if (is_chroma && x * 2 + 1 < src_height) {
+              addr = s + (src_height - 1 - (x * 2 + 1)) * src_stride + y / 2;
+              val2 = GST_READ_UINT16_LE (addr);
+              val = (val + val2) / 2;
+            }
+
+            GST_WRITE_UINT16_LE (d + y * dest_stride + x, val);
+          }
+        }
+      } else {
+        for (y = 0; y < dest_height; y++) {
+          for (x = 0; x < dest_width; x++) {
+            addr = s + (src_height - 1 - x * scale) * src_stride + y / scale;
+            val = GST_READ_UINT16_BE (addr);
+
+            if (is_chroma && x * 2 + 1 < src_height) {
+              addr = s + (src_height - 1 - (x * 2 + 1)) * src_stride + y / 2;
+              val2 = GST_READ_UINT16_BE (addr);
+              val = (val + val2) / 2;
+            }
+
+            GST_WRITE_UINT16_BE (d + y * dest_stride + x, val);
+          }
+        }
+      }
+      break;
+    case GST_VIDEO_ORIENTATION_90L:
+      if (is_le) {
+        for (y = 0; y < dest_height; y++) {
+          for (x = 0; x < dest_width; x++) {
+            addr = s + x * scale * src_stride + (src_width - 1 - y / scale);
+            val = GST_READ_UINT16_LE (addr);
+
+            if (is_chroma && x * 2 + 1 < src_width) {
+              addr = s + (x * 2 + 1) * src_stride + (src_width - 1 - y / 2);
+              val2 = GST_READ_UINT16_LE (addr);
+              val = (val + val2) / 2;
+            }
+
+            GST_WRITE_UINT16_LE (d + y * dest_stride + x, val);
+          }
+        }
+      } else {
+        for (y = 0; y < dest_height; y++) {
+          for (x = 0; x < dest_width; x++) {
+            addr = s + x * scale * src_stride + (src_width - 1 - y / scale);
+            val = GST_READ_UINT16_BE (addr);
+
+            if (is_chroma && x * 2 + 1 < src_width) {
+              addr = s + (x * 2 + 1) * src_stride + (src_width - 1 - y / 2);
+              val2 = GST_READ_UINT16_BE (addr);
+              val = (val + val2) / 2;
+            }
+
+            GST_WRITE_UINT16_BE (d + y * dest_stride + x, val);
+          }
+        }
+      }
+      break;
+    case GST_VIDEO_ORIENTATION_180:
+      for (y = 0; y < dest_height; y++) {
+        for (x = 0; x < dest_width; x++) {
+          d[y * dest_stride + x] =
+              s[(src_height - 1 - y) * src_stride + (src_width - 1 - x)];
+        }
+      }
+      break;
+    case GST_VIDEO_ORIENTATION_HORIZ:
+      for (y = 0; y < dest_height; y++) {
+        for (x = 0; x < dest_width; x++) {
+          d[y * dest_stride + x] = s[y * src_stride + (src_width - 1 - x)];
+        }
+      }
+      break;
+    case GST_VIDEO_ORIENTATION_VERT:
+      for (y = 0; y < dest_height; y++) {
+        for (x = 0; x < dest_width; x++) {
+          d[y * dest_stride + x] = s[(src_height - 1 - y) * src_stride + x];
+        }
+      }
+      break;
+    case GST_VIDEO_ORIENTATION_UL_LR:
+      if (is_le) {
+        for (y = 0; y < dest_height; y++) {
+          for (x = 0; x < dest_width; x++) {
+            addr = s + x * scale * src_stride + y / scale;
+            val = GST_READ_UINT16_LE (addr);
+
+            if (is_chroma && x * 2 + 1 < src_width) {
+              addr = s + (x * 2 + 1) * src_stride + y / 2;
+              val2 = GST_READ_UINT16_LE (addr);
+              val = (val + val2) / 2;
+            }
+
+            GST_WRITE_UINT16_LE (d + y * dest_stride + x, val);
+          }
+        }
+      } else {
+        for (y = 0; y < dest_height; y++) {
+          for (x = 0; x < dest_width; x++) {
+            addr = s + x * scale * src_stride + y / scale;
+            val = GST_READ_UINT16_BE (addr);
+
+            if (is_chroma && x * 2 + 1 < src_width) {
+              addr = s + (x * 2 + 1) * src_stride + y / 2;
+              val2 = GST_READ_UINT16_BE (addr);
+              val = (val + val2) / 2;
+            }
+
+            GST_WRITE_UINT16_BE (d + y * dest_stride + x, val);
+          }
+        }
+      }
+      break;
+    case GST_VIDEO_ORIENTATION_UR_LL:
+      if (is_le) {
+        for (y = 0; y < dest_height; y++) {
+          for (x = 0; x < dest_width; x++) {
+            addr = s
+                + (src_height - 1 - x * scale) * src_stride
+                + (src_width - 1 - y / scale);
+            val = GST_READ_UINT16_LE (addr);
+
+            if (is_chroma && x * 2 + 1 < src_width) {
+              addr = s
+                  + (src_height - 1 - (x * 2 + 1)) * src_stride
+                  + (src_width - 1 - y / 2);
+              val2 = GST_READ_UINT16_LE (addr);
+              val = (val + val2) / 2;
+            }
+
+            GST_WRITE_UINT16_LE (d + y * dest_stride + x, val);
+          }
+        }
+      } else {
+        for (y = 0; y < dest_height; y++) {
+          for (x = 0; x < dest_width; x++) {
+            addr = s
+                + (src_height - 1 - x * scale) * src_stride
+                + (src_width - 1 - y / scale);
+            val = GST_READ_UINT16_BE (addr);
+
+            if (is_chroma && x * 2 + 1 < src_width) {
+              addr = s
+                  + (src_height - 1 - (x * 2 + 1)) * src_stride
+                  + (src_width - 1 - y / 2);
+              val2 = GST_READ_UINT16_BE (addr);
+              val = (val + val2) / 2;
+            }
+
+            GST_WRITE_UINT16_BE (d + y * dest_stride + x, val);
+          }
+        }
+      }
+      break;
+    case GST_VIDEO_ORIENTATION_IDENTITY:
+      gst_video_frame_copy (dest, src);
+      break;
+    default:
+      g_assert_not_reached ();
+      break;
+  }
+}
+
+static void
+gst_video_flip_planar_yuv_422_16bit (GstVideoFlip * videoflip,
+    GstVideoFrame * dest, const GstVideoFrame * src)
+{
+  gboolean format_is_le;
+
+  /* We need to consider the endianness during transforms
+   * which need average chrominance values between two pixels */
+  format_is_le = GST_VIDEO_FORMAT_INFO_IS_LE (dest->info.finfo);
+
+  /* Attempt to get the compiler to inline specialized variants of this function 
+   * to avoid too much branching due to endianness checks */
+  if (format_is_le) {
+    rotate_yuv422_plane (dest, src, 0, videoflip->active_method, FALSE, TRUE);
+    rotate_yuv422_plane (dest, src, 1, videoflip->active_method, TRUE, TRUE);
+    rotate_yuv422_plane (dest, src, 2, videoflip->active_method, TRUE, TRUE);
+  } else {
+    rotate_yuv422_plane (dest, src, 0, videoflip->active_method, FALSE, FALSE);
+    rotate_yuv422_plane (dest, src, 1, videoflip->active_method, TRUE, FALSE);
+    rotate_yuv422_plane (dest, src, 2, videoflip->active_method, TRUE, FALSE);
   }
 }
 
@@ -766,7 +1239,6 @@ gst_video_flip_packed_simple (GstVideoFlip * videoflip, GstVideoFrame * dest,
   }
 }
 
-
 static void
 gst_video_flip_y422 (GstVideoFlip * videoflip, GstVideoFrame * dest,
     const GstVideoFrame * src)
@@ -991,6 +1463,22 @@ gst_video_flip_configure_process (GstVideoFlip * vf)
     case GST_VIDEO_FORMAT_Y444:
       vf->process = gst_video_flip_planar_yuv;
       break;
+    case GST_VIDEO_FORMAT_I420_10LE:
+    case GST_VIDEO_FORMAT_I420_10BE:
+    case GST_VIDEO_FORMAT_I420_12LE:
+    case GST_VIDEO_FORMAT_I420_12BE:
+    case GST_VIDEO_FORMAT_Y444_10LE:
+    case GST_VIDEO_FORMAT_Y444_10BE:
+    case GST_VIDEO_FORMAT_Y444_12LE:
+    case GST_VIDEO_FORMAT_Y444_12BE:
+      vf->process = gst_video_flip_planar_yuv_16bit;
+      break;
+    case GST_VIDEO_FORMAT_I422_10LE:
+    case GST_VIDEO_FORMAT_I422_10BE:
+    case GST_VIDEO_FORMAT_I422_12LE:
+    case GST_VIDEO_FORMAT_I422_12BE:
+      vf->process = gst_video_flip_planar_yuv_422_16bit;
+      break;
     case GST_VIDEO_FORMAT_YUY2:
     case GST_VIDEO_FORMAT_UYVY:
     case GST_VIDEO_FORMAT_YVYU:
@@ -1140,6 +1628,7 @@ gst_video_flip_set_method (GstVideoFlip * videoflip,
     g_type_class_unref (enum_class);
 
     videoflip->proposed_method = method;
+    videoflip->change_configuring_method = TRUE;
 
     GST_OBJECT_UNLOCK (videoflip);
 
@@ -1223,7 +1712,6 @@ gst_video_flip_src_event (GstBaseTransform * trans, GstEvent * event)
 {
   GstVideoFlip *vf = GST_VIDEO_FLIP (trans);
   gdouble new_x, new_y, x, y;
-  GstStructure *structure;
   gboolean ret;
   GstVideoInfo *out_info = &GST_VIDEO_FILTER (trans)->out_info;
 
@@ -1231,12 +1719,9 @@ gst_video_flip_src_event (GstBaseTransform * trans, GstEvent * event)
 
   switch (GST_EVENT_TYPE (event)) {
     case GST_EVENT_NAVIGATION:
-      event =
-          GST_EVENT (gst_mini_object_make_writable (GST_MINI_OBJECT (event)));
+      event = gst_event_make_writable (event);
 
-      structure = (GstStructure *) gst_event_get_structure (event);
-      if (gst_structure_get_double (structure, "pointer_x", &x) &&
-          gst_structure_get_double (structure, "pointer_y", &y)) {
+      if (gst_navigation_event_get_coordinates (event, &x, &y)) {
         GST_DEBUG_OBJECT (vf, "converting %fx%f", x, y);
         GST_OBJECT_LOCK (vf);
         switch (vf->active_method) {
@@ -1275,8 +1760,7 @@ gst_video_flip_src_event (GstBaseTransform * trans, GstEvent * event)
         }
         GST_OBJECT_UNLOCK (vf);
         GST_DEBUG_OBJECT (vf, "to %fx%f", new_x, new_y);
-        gst_structure_set (structure, "pointer_x", G_TYPE_DOUBLE, new_x,
-            "pointer_y", G_TYPE_DOUBLE, new_y, NULL);
+        gst_navigation_event_set_coordinates (event, new_x, new_y);
       }
       break;
     default:
@@ -1293,7 +1777,7 @@ gst_video_flip_sink_event (GstBaseTransform * trans, GstEvent * event)
 {
   GstVideoFlip *vf = GST_VIDEO_FLIP (trans);
   GstTagList *taglist;
-  gchar *orientation;
+  GstVideoOrientationMethod method;
   gboolean ret;
 
   GST_DEBUG_OBJECT (vf, "handling %s event", GST_EVENT_TYPE_NAME (event));
@@ -1302,25 +1786,20 @@ gst_video_flip_sink_event (GstBaseTransform * trans, GstEvent * event)
     case GST_EVENT_TAG:
       gst_event_parse_tag (event, &taglist);
 
-      if (gst_tag_list_get_string (taglist, "image-orientation", &orientation)) {
-        if (!g_strcmp0 ("rotate-0", orientation))
-          gst_video_flip_set_method (vf, GST_VIDEO_ORIENTATION_IDENTITY, TRUE);
-        else if (!g_strcmp0 ("rotate-90", orientation))
-          gst_video_flip_set_method (vf, GST_VIDEO_ORIENTATION_90R, TRUE);
-        else if (!g_strcmp0 ("rotate-180", orientation))
-          gst_video_flip_set_method (vf, GST_VIDEO_ORIENTATION_180, TRUE);
-        else if (!g_strcmp0 ("rotate-270", orientation))
-          gst_video_flip_set_method (vf, GST_VIDEO_ORIENTATION_90L, TRUE);
-        else if (!g_strcmp0 ("flip-rotate-0", orientation))
-          gst_video_flip_set_method (vf, GST_VIDEO_ORIENTATION_HORIZ, TRUE);
-        else if (!g_strcmp0 ("flip-rotate-90", orientation))
-          gst_video_flip_set_method (vf, GST_VIDEO_ORIENTATION_UL_LR, TRUE);
-        else if (!g_strcmp0 ("flip-rotate-180", orientation))
-          gst_video_flip_set_method (vf, GST_VIDEO_ORIENTATION_VERT, TRUE);
-        else if (!g_strcmp0 ("flip-rotate-270", orientation))
-          gst_video_flip_set_method (vf, GST_VIDEO_ORIENTATION_UR_LL, TRUE);
+      if (gst_video_orientation_from_tag (taglist, &method)) {
+        gst_video_flip_set_method (vf, method, TRUE);
 
-        g_free (orientation);
+        if (vf->method == GST_VIDEO_ORIENTATION_AUTO) {
+          /* Update the orientation tag as we rotate the video accordingly.
+           * The event (and so the tag list) can be shared so always copy both. */
+          taglist = gst_tag_list_copy (taglist);
+
+          gst_tag_list_add (taglist, GST_TAG_MERGE_REPLACE,
+              "image-orientation", "rotate-0", NULL);
+
+          gst_event_unref (event);
+          event = gst_event_new_tag (taglist);
+        }
       }
       break;
     default:
@@ -1367,6 +1846,17 @@ gst_video_flip_get_property (GObject * object, guint prop_id, GValue * value,
 }
 
 static void
+gst_video_flip_constructed (GObject * object)
+{
+  GstVideoFlip *self = GST_VIDEO_FLIP (object);
+
+  if (self->method == (GstVideoOrientationMethod) PROP_METHOD_DEFAULT) {
+    gst_video_flip_set_method (self,
+        (GstVideoOrientationMethod) PROP_METHOD_DEFAULT, FALSE);
+  }
+}
+
+static void
 gst_video_flip_class_init (GstVideoFlipClass * klass)
 {
   GObjectClass *gobject_class = (GObjectClass *) klass;
@@ -1379,13 +1869,14 @@ gst_video_flip_class_init (GstVideoFlipClass * klass)
 
   gobject_class->set_property = gst_video_flip_set_property;
   gobject_class->get_property = gst_video_flip_get_property;
+  gobject_class->constructed = gst_video_flip_constructed;
 
   g_object_class_install_property (gobject_class, PROP_METHOD,
       g_param_spec_enum ("method", "method",
           "method (deprecated, use video-direction instead)",
           GST_TYPE_VIDEO_FLIP_METHOD, PROP_METHOD_DEFAULT,
           GST_PARAM_CONTROLLABLE | GST_PARAM_MUTABLE_PLAYING |
-          G_PARAM_READWRITE | G_PARAM_CONSTRUCT | G_PARAM_STATIC_STRINGS));
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
   g_object_class_override_property (gobject_class, PROP_VIDEO_DIRECTION,
       "video-direction");
   /* override the overriden property's flags to include the mutable in playing
@@ -1419,6 +1910,12 @@ gst_video_flip_class_init (GstVideoFlipClass * klass)
 static void
 gst_video_flip_init (GstVideoFlip * videoflip)
 {
+  /* We initialize to the default and call set_method() from constructed
+   * if the value hasn't changed, this ensures set_method() does get called
+   * even if the non-construct method / direction properties aren't set
+   */
+  videoflip->method = (GstVideoOrientationMethod) PROP_METHOD_DEFAULT;
+
   /* AUTO is not valid for active method, this is just to ensure we setup the
    * method in gst_video_flip_set_method() */
   videoflip->active_method = GST_VIDEO_ORIENTATION_AUTO;

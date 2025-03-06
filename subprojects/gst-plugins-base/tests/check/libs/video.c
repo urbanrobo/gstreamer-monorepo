@@ -2739,6 +2739,11 @@ GST_START_TEST (test_video_convert)
           GST_VIDEO_CONVERTER_OPT_DEST_WIDTH, G_TYPE_INT, 300,
           GST_VIDEO_CONVERTER_OPT_DEST_HEIGHT, G_TYPE_INT, 220, NULL));
 
+  g_assert (gst_video_info_is_equal (&ininfo,
+          gst_video_converter_get_in_info (convert)));
+  g_assert (gst_video_info_is_equal (&outinfo,
+          gst_video_converter_get_out_info (convert)));
+
   gst_video_converter_frame (convert, &inframe, &outframe);
   gst_video_converter_free (convert);
 
@@ -3203,10 +3208,13 @@ GST_START_TEST (test_video_formats_pstrides)
         || fmt == GST_VIDEO_FORMAT_NV12_64Z32
         || fmt == GST_VIDEO_FORMAT_NV12_4L4
         || fmt == GST_VIDEO_FORMAT_NV12_32L32
+        || fmt == GST_VIDEO_FORMAT_NV12_16L32S
         || fmt == GST_VIDEO_FORMAT_NV12_10LE32
         || fmt == GST_VIDEO_FORMAT_NV16_10LE32
         || fmt == GST_VIDEO_FORMAT_NV12_10LE40
-        || fmt == GST_VIDEO_FORMAT_Y410) {
+        || fmt == GST_VIDEO_FORMAT_Y410
+        || fmt == GST_VIDEO_FORMAT_NV12_8L128
+        || fmt == GST_VIDEO_FORMAT_NV12_10BE_8L128) {
       fmt++;
       continue;
     }
@@ -4003,6 +4011,106 @@ GST_START_TEST (test_video_make_raw_caps)
 
 GST_END_TEST;
 
+GST_START_TEST (test_video_extrapolate_stride)
+{
+  guint num_formats = get_num_formats ();
+  GstVideoFormat format;
+
+  for (format = 2; format < num_formats; format++) {
+    GstVideoInfo info;
+    guint p;
+
+    /*
+     * Use an easy resolution, since GStreamer uses arbitrary padding which
+     * cannot be extrapolated.
+     */
+    gst_video_info_set_format (&info, format, 320, 240);
+
+    /* Skip over tiled formats, since stride meaning is different */
+    if (GST_VIDEO_FORMAT_INFO_IS_TILED (info.finfo))
+      continue;
+
+    for (p = 0; p < GST_VIDEO_INFO_N_PLANES (&info); p++) {
+      guint stride;
+
+      /* Skip over palette planes */
+      if (GST_VIDEO_FORMAT_INFO_HAS_PALETTE (info.finfo) &&
+          p >= GST_VIDEO_COMP_PALETTE)
+        break;
+
+      stride = gst_video_format_info_extrapolate_stride (info.finfo, p,
+          info.stride[0]);
+      fail_unless (stride == info.stride[p]);
+    }
+  }
+}
+
+GST_END_TEST;
+
+GST_START_TEST (test_auto_video_frame_unmap)
+{
+#ifdef g_auto
+  g_autoptr (GstBuffer) buf = NULL;
+  GstVideoInfo info;
+
+  fail_unless (gst_video_info_set_format (&info, GST_VIDEO_FORMAT_ENCODED, 10,
+          10));
+  buf = gst_buffer_new_and_alloc (info.size);
+
+  {
+    // unmap should be no-op
+    g_auto (GstVideoFrame) frame = GST_VIDEO_FRAME_INIT;
+    fail_unless (frame.buffer == NULL);
+  }
+
+  {
+    g_auto (GstVideoFrame) frame = GST_VIDEO_FRAME_INIT;
+    gst_video_frame_map (&frame, &info, buf, GST_MAP_READ);
+    fail_unless_equals_int (GST_MINI_OBJECT_REFCOUNT (buf), 2);
+  }
+
+  fail_unless_equals_int (GST_MINI_OBJECT_REFCOUNT (buf), 1);
+
+#endif
+}
+
+GST_END_TEST;
+
+static gboolean
+is_equal_primaries_coord (const GstVideoColorPrimariesInfo * a,
+    const GstVideoColorPrimariesInfo * b)
+{
+  return (a->Wx == b->Wx && a->Wy == b->Wy && a->Rx == b->Rx && a->Ry == a->Ry
+      && a->Gx == b->Gx && a->Gy == b->Gy && a->Bx == b->Bx && a->By == b->By);
+}
+
+GST_START_TEST (test_video_color_primaries_equivalent)
+{
+  guint i, j;
+
+  for (i = 0; i <= GST_VIDEO_COLOR_PRIMARIES_EBU3213; i++) {
+    for (j = 0; j <= GST_VIDEO_COLOR_PRIMARIES_EBU3213; j++) {
+      GstVideoColorPrimaries primaries = (GstVideoColorPrimaries) i;
+      GstVideoColorPrimaries other = (GstVideoColorPrimaries) j;
+      const GstVideoColorPrimariesInfo *primaries_info =
+          gst_video_color_primaries_get_info (primaries);
+      const GstVideoColorPrimariesInfo *other_info =
+          gst_video_color_primaries_get_info (other);
+      gboolean equal =
+          gst_video_color_primaries_is_equivalent (primaries, other);
+      gboolean same_coord = is_equal_primaries_coord (primaries_info,
+          other_info);
+
+      if (equal)
+        fail_unless (same_coord);
+      else
+        fail_if (same_coord);
+    }
+  }
+}
+
+GST_END_TEST;
+
 static Suite *
 video_suite (void)
 {
@@ -4057,6 +4165,9 @@ video_suite (void)
   tcase_add_test (tc_chain, test_video_meta_align);
   tcase_add_test (tc_chain, test_video_flags);
   tcase_add_test (tc_chain, test_video_make_raw_caps);
+  tcase_add_test (tc_chain, test_video_extrapolate_stride);
+  tcase_add_test (tc_chain, test_auto_video_frame_unmap);
+  tcase_add_test (tc_chain, test_video_color_primaries_equivalent);
 
   return s;
 }

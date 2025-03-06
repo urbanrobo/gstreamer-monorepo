@@ -21,4 +21,5 @@
 
 #include <gst/gst.h>
 
-const gchar *gst_wpe_get_uninstalled_extension_path (void);
+#define DEFAULT_LOCATION "about:blank"
+const gchar *gst_wpe_get_devenv_extension_path (void);

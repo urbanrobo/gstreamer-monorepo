@@ -171,8 +171,7 @@ gst_rtp_gst_pay_reset (GstRtpGSTPay * rtpgstpay, gboolean full)
   rtpgstpay->flags &= 0x70;
   rtpgstpay->etype = 0;
   if (rtpgstpay->pending_buffers)
-    g_list_free_full (rtpgstpay->pending_buffers,
-        (GDestroyNotify) gst_buffer_list_unref);
+    gst_buffer_list_unref (rtpgstpay->pending_buffers);
   rtpgstpay->pending_buffers = NULL;
   if (full) {
     if (rtpgstpay->taglist)
@@ -271,7 +270,6 @@ gst_rtp_gst_pay_create_from_adapter (GstRtpGSTPay * rtpgstpay,
 {
   guint avail, mtu;
   guint frag_offset;
-  GstBufferList *list;
 
   avail = gst_adapter_available (rtpgstpay->adapter);
   if (avail == 0)
@@ -279,7 +277,9 @@ gst_rtp_gst_pay_create_from_adapter (GstRtpGSTPay * rtpgstpay,
 
   mtu = GST_RTP_BASE_PAYLOAD_MTU (rtpgstpay);
 
-  list = gst_buffer_list_new_sized ((avail / (mtu - (RTP_HEADER_LEN + 8))) + 1);
+  if (!rtpgstpay->pending_buffers)
+    rtpgstpay->pending_buffers =
+        gst_buffer_list_new_sized ((avail / (mtu - (RTP_HEADER_LEN + 8))) + 1);
   frag_offset = 0;
 
   while (avail) {
@@ -335,8 +335,10 @@ gst_rtp_gst_pay_create_from_adapter (GstRtpGSTPay * rtpgstpay,
     frag_offset += payload_len;
     avail -= payload_len;
 
-    if (avail == 0)
+    if (avail == 0) {
       gst_rtp_buffer_set_marker (&rtp, TRUE);
+      GST_BUFFER_FLAG_SET (outbuf, GST_BUFFER_FLAG_MARKER);
+    }
 
     gst_rtp_buffer_unmap (&rtp);
 
@@ -354,12 +356,21 @@ gst_rtp_gst_pay_create_from_adapter (GstRtpGSTPay * rtpgstpay,
     GST_BUFFER_PTS (outbuf) = timestamp;
 
     /* and add to list */
-    gst_buffer_list_insert (list, -1, outbuf);
+    gst_buffer_list_insert (rtpgstpay->pending_buffers, -1, outbuf);
   }
 
   rtpgstpay->flags &= 0x70;
   rtpgstpay->etype = 0;
-  rtpgstpay->pending_buffers = g_list_append (rtpgstpay->pending_buffers, list);
+
+  return TRUE;
+}
+
+static gboolean
+retimestamp_buffer (GstBuffer ** buffer, guint idx, gpointer user_data)
+{
+  GstClockTime *timestamp = user_data;
+
+  GST_BUFFER_PTS (*buffer) = *timestamp;
 
   return TRUE;
 }
@@ -368,22 +379,21 @@ static GstFlowReturn
 gst_rtp_gst_pay_flush (GstRtpGSTPay * rtpgstpay, GstClockTime timestamp)
 {
   GstFlowReturn ret = GST_FLOW_OK;
-  GList *iter;
 
   gst_rtp_gst_pay_create_from_adapter (rtpgstpay, timestamp);
 
-  iter = rtpgstpay->pending_buffers;
-  while (iter) {
-    GstBufferList *list = iter->data;
+  if (rtpgstpay->pending_buffers) {
+    // make sure all buffers in the buffer list have the correct timestamp.
+    // If we created packets based on an event they would have
+    // GST_CLOCK_TIME_NONE as PTS.
 
-    rtpgstpay->pending_buffers = iter =
-        g_list_delete_link (rtpgstpay->pending_buffers, iter);
+    gst_buffer_list_foreach (rtpgstpay->pending_buffers, retimestamp_buffer,
+        &timestamp);
 
     /* push the whole buffer list at once */
     ret = gst_rtp_base_payload_push_list (GST_RTP_BASE_PAYLOAD (rtpgstpay),
-        list);
-    if (ret != GST_FLOW_OK)
-      break;
+        rtpgstpay->pending_buffers);
+    rtpgstpay->pending_buffers = NULL;
   }
 
   return ret;
@@ -529,6 +539,11 @@ gst_rtp_gst_pay_sink_event (GstRTPBasePayload * payload, GstEvent * event)
     g_atomic_int_set (&rtpgstpay->force_config, TRUE);
   }
 
+  if (GST_EVENT_TYPE (event) == GST_EVENT_EOS) {
+    // We must flush at this point, as no next input frame is expected
+    gst_rtp_gst_pay_flush (rtpgstpay, GST_CLOCK_TIME_NONE);
+  }
+
   ret =
       GST_RTP_BASE_PAYLOAD_CLASS (parent_class)->sink_event (payload,
       gst_event_ref (event));
@@ -584,12 +599,10 @@ gst_rtp_gst_pay_sink_event (GstRTPBasePayload * payload, GstEvent * event)
     GST_DEBUG_OBJECT (rtpgstpay, "make event type %d for %s",
         etype, GST_EVENT_TYPE_NAME (event));
     gst_rtp_gst_pay_send_event (rtpgstpay, etype, event);
-    /* Do not send stream-start right away since caps/new-segment were not yet
-       sent, so our data would be considered invalid */
-    if (etype != 4) {
-      /* flush the adapter immediately */
-      gst_rtp_gst_pay_flush (rtpgstpay, GST_CLOCK_TIME_NONE);
-    }
+    // do not flush events here yet as they would get no timestamp at all or
+    // the timestamp of the previous buffer, both of which are bogus. We need
+    // to wait until the next actual input frame to know the timestamp that
+    // applies to the event.
   }
 
   gst_event_unref (event);

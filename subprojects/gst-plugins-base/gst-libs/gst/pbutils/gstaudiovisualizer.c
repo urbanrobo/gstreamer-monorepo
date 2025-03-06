@@ -336,6 +336,10 @@ shader_fade_and_move_horiz_out (GstAudioVisualizer * scope,
     }
     d += ds;
   }
+
+  /* rewind one stride */
+  d -= ds;
+
   /* move lower half down */
   for (j = 0; j < height / 2; j++) {
     d += ds;
@@ -1046,10 +1050,9 @@ gst_audio_visualizer_chain (GstPad * pad, GstObject * parent,
   GstFlowReturn ret = GST_FLOW_OK;
   GstAudioVisualizer *scope;
   GstAudioVisualizerClass *klass;
-  GstBuffer *inbuf;
+  GstBuffer *inbuf, *databuf;
   guint64 dist, ts;
   guint avail, sbpf;
-  gpointer adata;
   gint bpf, rate;
 
   scope = GST_AUDIO_VISUALIZER (parent);
@@ -1161,10 +1164,11 @@ gst_audio_visualizer_chain (GstPad * pad, GstObject * parent,
     GST_BUFFER_DURATION (outbuf) = scope->priv->frame_duration;
 
     /* this can fail as the data size we need could have changed */
-    if (!(adata = (gpointer) gst_adapter_map (scope->priv->adapter, sbpf)))
+    if (!(databuf = gst_adapter_get_buffer (scope->priv->adapter, sbpf)))
       break;
 
-    gst_video_frame_map (&outframe, &scope->vinfo, outbuf, GST_MAP_READWRITE);
+    gst_video_frame_map (&outframe, &scope->vinfo, outbuf,
+        GST_MAP_READWRITE | GST_VIDEO_FRAME_MAP_FLAG_NO_REF);
 
     if (scope->priv->shader) {
       gst_video_frame_copy (&outframe, &scope->priv->tempframe);
@@ -1177,9 +1181,9 @@ gst_audio_visualizer_chain (GstPad * pad, GstObject * parent,
       }
     }
 
-    gst_buffer_replace_all_memory (inbuf,
-        gst_memory_new_wrapped (GST_MEMORY_FLAG_READONLY, adata, sbpf, 0,
-            sbpf, NULL, NULL));
+    gst_buffer_remove_all_memory (inbuf);
+    gst_buffer_copy_into (inbuf, databuf, GST_BUFFER_COPY_MEMORY, 0, sbpf);
+    gst_buffer_unref (databuf);
 
     /* call class->render() vmethod */
     if (klass->render) {

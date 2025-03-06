@@ -26,18 +26,20 @@
 #include "gstd3d11memory.h"
 #include "gstd3d11device.h"
 #include "gstd3d11utils.h"
+#include "gstd3d11-private.h"
 
 #include <string.h>
 
 /**
  * SECTION:gstd3d11bufferpool
  * @title: GstD3D11BufferPool
- * @short_description: buffer pool for #GstD3D11Memory objects
- * @see_also: #GstBufferPool, #GstGLMemory
+ * @short_description: buffer pool for GstD3D11Memory object
+ * @see_also: #GstBufferPool, #GstD3D11Memory
  *
- * a #GstD3D11BufferPool is an object that allocates buffers with #GstD3D11Memory
+ * This GstD3D11BufferPool is an object that allocates buffers
+ * with #GstD3D11Memory
  *
- * A #GstGLBufferPool is created with gst_d3d11_buffer_pool_new()
+ * Since: 1.22
  */
 
 GST_DEBUG_CATEGORY_STATIC (gst_d3d11_buffer_pool_debug);
@@ -48,7 +50,6 @@ struct _GstD3D11BufferPoolPrivate
   GstD3D11Allocator *alloc[GST_VIDEO_MAX_PLANES];
 
   GstD3D11AllocationParams *d3d11_params;
-  gboolean texture_array_pool;
 
   gint stride[GST_VIDEO_MAX_PLANES];
   gsize offset[GST_VIDEO_MAX_PLANES];
@@ -64,10 +65,6 @@ static gboolean gst_d3d11_buffer_pool_set_config (GstBufferPool * pool,
     GstStructure * config);
 static GstFlowReturn gst_d3d11_buffer_pool_alloc_buffer (GstBufferPool * pool,
     GstBuffer ** buffer, GstBufferPoolAcquireParams * params);
-static GstFlowReturn gst_d3d11_buffer_pool_acquire_buffer (GstBufferPool * pool,
-    GstBuffer ** buffer, GstBufferPoolAcquireParams * params);
-static void gst_d3d11_buffer_pool_reset_buffer (GstBufferPool * pool,
-    GstBuffer * buffer);
 static gboolean gst_d3d11_buffer_pool_start (GstBufferPool * pool);
 static gboolean gst_d3d11_buffer_pool_stop (GstBufferPool * pool);
 
@@ -82,8 +79,6 @@ gst_d3d11_buffer_pool_class_init (GstD3D11BufferPoolClass * klass)
   bufferpool_class->get_options = gst_d3d11_buffer_pool_get_options;
   bufferpool_class->set_config = gst_d3d11_buffer_pool_set_config;
   bufferpool_class->alloc_buffer = gst_d3d11_buffer_pool_alloc_buffer;
-  bufferpool_class->acquire_buffer = gst_d3d11_buffer_pool_acquire_buffer;
-  bufferpool_class->reset_buffer = gst_d3d11_buffer_pool_reset_buffer;
   bufferpool_class->start = gst_d3d11_buffer_pool_start;
   bufferpool_class->stop = gst_d3d11_buffer_pool_stop;
 
@@ -146,6 +141,7 @@ gst_d3d11_buffer_pool_set_config (GstBufferPool * pool, GstStructure * config)
   D3D11_TEXTURE2D_DESC *desc;
   const GstD3D11Format *format;
   gsize offset = 0;
+  guint align = 0;
   gint i;
 
   if (!gst_buffer_pool_config_get_params (config, &caps, NULL, &min_buffers,
@@ -175,37 +171,35 @@ gst_d3d11_buffer_pool_set_config (GstBufferPool * pool, GstStructure * config)
     /* allocate memory with resource format by default */
     priv->d3d11_params =
         gst_d3d11_allocation_params_new (self->device,
-        &info, (GstD3D11AllocationFlags) 0, 0);
+        &info, GST_D3D11_ALLOCATION_FLAG_DEFAULT, 0, 0);
   }
 
   desc = priv->d3d11_params->desc;
+  align = gst_d3d11_dxgi_format_get_alignment (desc[0].Format);
 
   /* resolution of semi-planar formats must be multiple of 2 */
-  if (desc[0].Format == DXGI_FORMAT_NV12 || desc[0].Format == DXGI_FORMAT_P010
-      || desc[0].Format == DXGI_FORMAT_P016) {
-    if (desc[0].Width % 2 || desc[0].Height % 2) {
-      gint width, height;
-      GstVideoAlignment align;
+  if (align != 0 && (desc[0].Width % align || desc[0].Height % align)) {
+    gint width, height;
+    GstVideoAlignment video_align;
 
-      GST_WARNING_OBJECT (self, "Resolution %dx%d is not mutiple of 2, fixing",
-          desc[0].Width, desc[0].Height);
+    GST_WARNING_OBJECT (self, "Resolution %dx%d is not mutiple of %d, fixing",
+        desc[0].Width, desc[0].Height, align);
 
-      width = GST_ROUND_UP_2 (desc[0].Width);
-      height = GST_ROUND_UP_2 (desc[0].Height);
+    width = GST_ROUND_UP_N (desc[0].Width, align);
+    height = GST_ROUND_UP_N (desc[0].Height, align);
 
-      gst_video_alignment_reset (&align);
-      align.padding_right = width - desc[0].Width;
-      align.padding_bottom = height - desc[0].Height;
+    gst_video_alignment_reset (&video_align);
+    video_align.padding_right = width - desc[0].Width;
+    video_align.padding_bottom = height - desc[0].Height;
 
-      gst_d3d11_allocation_params_alignment (priv->d3d11_params, &align);
-    }
+    gst_d3d11_allocation_params_alignment (priv->d3d11_params, &video_align);
   }
 #ifndef GST_DISABLE_GST_DEBUG
   {
     GST_LOG_OBJECT (self, "Direct3D11 Allocation params");
     GST_LOG_OBJECT (self, "\tD3D11AllocationFlags: 0x%x",
         priv->d3d11_params->flags);
-    for (i = 0; GST_VIDEO_MAX_PLANES; i++) {
+    for (i = 0; i < GST_VIDEO_MAX_PLANES; i++) {
       if (desc[i].Format == DXGI_FORMAT_UNKNOWN)
         break;
       GST_LOG_OBJECT (self, "\t[plane %d] %dx%d, DXGI format %d",
@@ -243,10 +237,6 @@ gst_d3d11_buffer_pool_set_config (GstBufferPool * pool, GstStructure * config)
           max_buffers, max_array_size);
       max_buffers = max_array_size;
     }
-
-    priv->texture_array_pool = TRUE;
-  } else {
-    priv->texture_array_pool = FALSE;
   }
 
   offset = 0;
@@ -298,8 +288,7 @@ gst_d3d11_buffer_pool_set_config (GstBufferPool * pool, GstStructure * config)
     gst_memory_unref (mem);
   }
 
-  g_assert (priv->d3d11_params->d3d11_format != NULL);
-  format = priv->d3d11_params->d3d11_format;
+  format = &priv->d3d11_params->d3d11_format;
   /* single texture semi-planar formats */
   if (format->dxgi_format != DXGI_FORMAT_UNKNOWN &&
       GST_VIDEO_INFO_N_PLANES (&info) == 2) {
@@ -370,17 +359,10 @@ gst_d3d11_buffer_pool_alloc_buffer (GstBufferPool * pool, GstBuffer ** buffer,
   GstFlowReturn ret = GST_FLOW_OK;
 
   buf = gst_buffer_new ();
-  /* In case of texture-array, we are releasing memory objects in
-   * the GstBufferPool::reset_buffer() so that GstD3D11Memory objects can be
-   * returned to the GstD3D11PoolAllocator. So, underlying GstD3D11Memory
-   * will be filled in the later GstBufferPool::acquire_buffer() call.
-   * Don't fill memory here for non-texture-array therefore */
-  if (!priv->texture_array_pool) {
-    ret = gst_d3d11_buffer_pool_fill_buffer (self, buf);
-    if (ret != GST_FLOW_OK) {
-      gst_buffer_unref (buf);
-      return ret;
-    }
+  ret = gst_d3d11_buffer_pool_fill_buffer (self, buf);
+  if (ret != GST_FLOW_OK) {
+    gst_buffer_unref (buf);
+    return ret;
   }
 
   gst_buffer_add_video_meta_full (buf, GST_VIDEO_FRAME_FLAG_NONE,
@@ -391,48 +373,6 @@ gst_d3d11_buffer_pool_alloc_buffer (GstBufferPool * pool, GstBuffer ** buffer,
   *buffer = buf;
 
   return GST_FLOW_OK;
-}
-
-static GstFlowReturn
-gst_d3d11_buffer_pool_acquire_buffer (GstBufferPool * pool,
-    GstBuffer ** buffer, GstBufferPoolAcquireParams * params)
-{
-  GstD3D11BufferPool *self = GST_D3D11_BUFFER_POOL (pool);
-  GstD3D11BufferPoolPrivate *priv = self->priv;
-  GstFlowReturn ret;
-
-  ret = GST_BUFFER_POOL_CLASS (parent_class)->acquire_buffer (pool,
-      buffer, params);
-
-  if (ret != GST_FLOW_OK)
-    return ret;
-
-  /* Don't need special handling for non-texture-array case */
-  if (!priv->texture_array_pool)
-    return ret;
-
-  /* Baseclass will hold empty buffer in this case, fill GstMemory */
-  g_assert (gst_buffer_n_memory (*buffer) == 0);
-
-  return gst_d3d11_buffer_pool_fill_buffer (self, *buffer);
-}
-
-static void
-gst_d3d11_buffer_pool_reset_buffer (GstBufferPool * pool, GstBuffer * buffer)
-{
-  GstD3D11BufferPool *self = GST_D3D11_BUFFER_POOL (pool);
-  GstD3D11BufferPoolPrivate *priv = self->priv;
-
-  /* If we are using texture array, we should return GstD3D11Memory to
-   * to the GstD3D11PoolAllocator, so that the allocator can wake up
-   * if it's waiting for available memory object */
-  if (priv->texture_array_pool) {
-    GST_LOG_OBJECT (self, "Returning memory to allocator");
-    gst_buffer_remove_all_memory (buffer);
-  }
-
-  GST_BUFFER_POOL_CLASS (parent_class)->reset_buffer (pool, buffer);
-  GST_BUFFER_FLAGS (buffer) = 0;
 }
 
 static gboolean
@@ -506,7 +446,7 @@ gst_d3d11_buffer_pool_stop (GstBufferPool * pool)
  *
  * Returns: a #GstBufferPool that allocates buffers with #GstD3D11Memory
  *
- * Since: 1.20
+ * Since: 1.22
  */
 GstBufferPool *
 gst_d3d11_buffer_pool_new (GstD3D11Device * device)
@@ -531,7 +471,7 @@ gst_d3d11_buffer_pool_new (GstD3D11Device * device)
  * #GstD3D11AllocationParams on @config or %NULL if @config doesn't contain
  * #GstD3D11AllocationParams
  *
- * Since: 1.20
+ * Since: 1.22
  */
 GstD3D11AllocationParams *
 gst_buffer_pool_config_get_d3d11_allocation_params (GstStructure * config)
@@ -552,7 +492,7 @@ gst_buffer_pool_config_get_d3d11_allocation_params (GstStructure * config)
  *
  * Sets @params on @config
  *
- * Since: 1.20
+ * Since: 1.22
  */
 void
 gst_buffer_pool_config_set_d3d11_allocation_params (GstStructure * config,

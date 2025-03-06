@@ -1,6 +1,6 @@
 project('GStreamer manuals and tutorials', 'c',
-  version: '1.21.0.1',
-  meson_version : '>= 0.59')
+  version: '1.22.12.1',
+  meson_version : '>= 0.62')
 
 hotdoc_p = find_program('hotdoc')
 if not hotdoc_p.found()
@@ -67,13 +67,13 @@ if built_subprojects != ''
         if sub.get_variable('build_hotdoc')
             message('Building @0@ documentation'.format(project_name))
 
-            foreach lib: sub.get_variable('libs_doc')
+            foreach lib: sub.get_variable('libs_doc', [])
               hotdoc_subprojects += [lib]
               libs += lib.full_path() + pathsep
               deps += [lib]
             endforeach
 
-            foreach plugin_doc: sub.get_variable('plugins_doc')
+            foreach plugin_doc: sub.get_variable('plugins_doc', [])
               plugins_doc += plugin_doc.full_path() + pathsep
               hotdoc_subprojects += [plugin_doc]
               deps += [plugin_doc]
@@ -124,7 +124,12 @@ gstreamer_doc = hotdoc.generate_doc('GStreamer',
     build_always_stale: true,
     edit_on_github_repository: 'https://gitlab.freedesktop.org/gstreamer/gst-docs/',
     previous_symbol_index: join_paths(meson.current_source_dir(), 'symbols', 'symbol_index.json'),
+    fatal_warnings: get_option('fatal_warnings')
 )
+
+# For devhelp
+meson.add_devenv({'XDG_DATA_DIRS': meson.current_build_dir() / 'GStreamer-doc'},
+  method: 'prepend')
 
 cdata = configuration_data()
 cdata.set('GST_API_VERSION', apiversion)
@@ -139,3 +144,5 @@ run_target('release',
             meson.current_build_dir()],
   depends: [gstreamer_doc]
 )
+
+meson.add_dist_script('scripts/gen-changelog.py', meson.project_name(), '1.20.0', meson.project_version())

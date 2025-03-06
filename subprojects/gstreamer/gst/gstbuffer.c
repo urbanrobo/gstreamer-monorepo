@@ -130,6 +130,7 @@
 #include "gstbuffer.h"
 #include "gstbufferpool.h"
 #include "gstinfo.h"
+#include "gstmeta.h"
 #include "gstutils.h"
 #include "gstversion.h"
 
@@ -545,6 +546,7 @@ gst_buffer_copy_into (GstBuffer * dest, GstBuffer * src,
   GstMetaItem *walk;
   gsize bufsize;
   gboolean region = FALSE;
+  gboolean sharing_mem = FALSE;
 
   g_return_val_if_fail (dest != NULL, FALSE);
   g_return_val_if_fail (src != NULL, FALSE);
@@ -648,6 +650,9 @@ gst_buffer_copy_into (GstBuffer * dest, GstBuffer * src,
           return FALSE;
         }
 
+        /* Indicates if dest references any of src memories. */
+        sharing_mem |= (newmem == mem);
+
         _memory_add (dest, -1, newmem);
         left -= tocopy;
       }
@@ -661,11 +666,19 @@ gst_buffer_copy_into (GstBuffer * dest, GstBuffer * src,
         gst_buffer_remove_memory_range (dest, dest_len, -1);
         return FALSE;
       }
+
+      /* If we were sharing memory and the merge is no-op, we are still sharing. */
+      sharing_mem &= (mem == GST_BUFFER_MEM_PTR (dest, 0));
+
       _replace_memory (dest, len, 0, len, mem);
     }
   }
 
   if (flags & GST_BUFFER_COPY_META) {
+    gboolean deep;
+
+    deep = (flags & GST_BUFFER_COPY_DEEP) != 0;
+
     /* NOTE: GstGLSyncMeta copying relies on the meta
      *       being copied now, after the buffer data,
      *       so this has to happen last */
@@ -683,6 +696,11 @@ gst_buffer_copy_into (GstBuffer * dest, GstBuffer * src,
         GST_CAT_DEBUG (GST_CAT_BUFFER,
             "don't copy memory meta %p of API type %s", meta,
             g_type_name (info->api));
+      } else if (deep && gst_meta_api_type_has_tag (info->api,
+              _gst_meta_tag_memory_reference)) {
+        GST_CAT_DEBUG (GST_CAT_BUFFER,
+            "don't copy memory reference meta %p of API type %s", meta,
+            g_type_name (info->api));
       } else if (info->transform_func) {
         GstMetaTransformCopy copy_data;
 
@@ -698,6 +716,14 @@ gst_buffer_copy_into (GstBuffer * dest, GstBuffer * src,
         }
       }
     }
+  }
+
+  if (sharing_mem && src->pool != NULL) {
+    /* The new buffer references some of src's memories. We have to ensure that
+     * src buffer does not return to its buffer pool as long as its memories are
+     * used by other buffers. That would cause the buffer to be discarted by the
+     * pool because its memories are not writable. */
+    gst_buffer_add_parent_buffer_meta (dest, src);
   }
 
   return TRUE;
@@ -737,7 +763,7 @@ _gst_buffer_copy (const GstBuffer * buffer)
  * Creates a copy of the given buffer. This will make a newly allocated
  * copy of the data the source buffer contains.
  *
- * Returns: (transfer full): a new copy of @buf.
+ * Returns: (transfer full) (nullable): a new copy of @buf if the copy succeeded, %NULL otherwise.
  *
  * Since: 1.6
  */
@@ -779,6 +805,15 @@ _gst_buffer_free (GstBuffer * buffer)
 
   GST_CAT_LOG (GST_CAT_BUFFER, "finalize %p", buffer);
 
+  /* free our memory */
+  len = GST_BUFFER_MEM_LEN (buffer);
+  for (i = 0; i < len; i++) {
+    gst_memory_unlock (GST_BUFFER_MEM_PTR (buffer, i), GST_LOCK_FLAG_EXCLUSIVE);
+    gst_mini_object_remove_parent (GST_MINI_OBJECT_CAST (GST_BUFFER_MEM_PTR
+            (buffer, i)), GST_MINI_OBJECT_CAST (buffer));
+    gst_memory_unref (GST_BUFFER_MEM_PTR (buffer, i));
+  }
+
   /* free metadata */
   for (walk = GST_BUFFER_META (buffer); walk; walk = next) {
     GstMeta *meta = &walk->meta;
@@ -796,15 +831,6 @@ _gst_buffer_free (GstBuffer * buffer)
   /* get the size, when unreffing the memory, we could also unref the buffer
    * itself */
   msize = GST_BUFFER_SLICE_SIZE (buffer);
-
-  /* free our memory */
-  len = GST_BUFFER_MEM_LEN (buffer);
-  for (i = 0; i < len; i++) {
-    gst_memory_unlock (GST_BUFFER_MEM_PTR (buffer, i), GST_LOCK_FLAG_EXCLUSIVE);
-    gst_mini_object_remove_parent (GST_MINI_OBJECT_CAST (GST_BUFFER_MEM_PTR
-            (buffer, i)), GST_MINI_OBJECT_CAST (buffer));
-    gst_memory_unref (GST_BUFFER_MEM_PTR (buffer, i));
-  }
 
   /* we set msize to 0 when the buffer is part of the memory block */
   if (msize) {
@@ -1907,12 +1933,7 @@ gst_buffer_unmap (GstBuffer * buffer, GstMapInfo * info)
   g_return_if_fail (GST_IS_BUFFER (buffer));
   g_return_if_fail (info != NULL);
 
-  /* we need to check for NULL, it is possible that we tried to map a buffer
-   * without memory and we should be able to unmap that fine */
-  if (G_LIKELY (info->memory)) {
-    gst_memory_unmap (info->memory, info);
-    gst_memory_unref (info->memory);
-  }
+  _gst_buffer_map_info_clear ((GstBufferMapInfo *) info);
 }
 
 /**
@@ -2137,8 +2158,8 @@ gst_buffer_memset (GstBuffer * buffer, gsize offset, guint8 val, gsize size)
  * duration and offset end fields are also copied. If not they will be set
  * to #GST_CLOCK_TIME_NONE and #GST_BUFFER_OFFSET_NONE.
  *
- * Returns: (transfer full): the new #GstBuffer or %NULL if the arguments were
- *     invalid.
+ * Returns: (transfer full) (nullable): the new #GstBuffer or %NULL if copying
+ *     failed.
  */
 GstBuffer *
 gst_buffer_copy_region (GstBuffer * buffer, GstBufferCopyFlags flags,
@@ -2672,7 +2693,7 @@ GType
 gst_parent_buffer_meta_api_get_type (void)
 {
   static GType type = 0;
-  static const gchar *tags[] = { NULL };
+  static const gchar *tags[] = { GST_META_TAG_MEMORY_REFERENCE_STR, NULL };
 
   if (g_once_init_enter (&type)) {
     GType _type = gst_meta_api_type_register ("GstParentBufferMetaAPI", tags);
@@ -3005,7 +3026,7 @@ gst_clear_buffer (GstBuffer ** buf_ptr)
  * Check gst_buffer_copy_deep() if you want to force the data
  * to be copied to newly allocated memory.
  *
- * Returns: (transfer full): a new copy of @buf.
+ * Returns: (transfer full) (nullable): a new copy of @buf if the copy succeeded, %NULL otherwise.
  */
 GstBuffer *
 gst_buffer_copy (const GstBuffer * buf)

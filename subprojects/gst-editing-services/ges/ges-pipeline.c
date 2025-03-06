@@ -255,6 +255,16 @@ _timeline_track_removed_cb (GESTimeline * timeline, GESTrack * track,
 }
 
 static void
+ges_pipeline_constructed (GObject * object)
+{
+  GESPipeline *self = GES_PIPELINE (object);
+
+  ges_pipeline_set_mode (self, DEFAULT_TIMELINE_MODE);
+
+  ((GObjectClass *) ges_pipeline_parent_class)->constructed (object);
+}
+
+static void
 ges_pipeline_dispose (GObject * object)
 {
   GESPipeline *self = GES_PIPELINE (object);
@@ -301,6 +311,8 @@ ges_pipeline_class_init (GESPipelineClass * klass)
   GST_DEBUG_CATEGORY_INIT (ges_pipeline_debug, "gespipeline",
       GST_DEBUG_FG_YELLOW, "ges pipeline");
 
+
+  object_class->constructed = ges_pipeline_constructed;
   object_class->dispose = ges_pipeline_dispose;
   object_class->get_property = ges_pipeline_get_property;
   object_class->set_property = ges_pipeline_set_property;
@@ -404,8 +416,6 @@ ges_pipeline_init (GESPipeline * self)
     goto no_playsink;
   if (G_UNLIKELY (self->priv->encodebin == NULL))
     goto no_encodebin;
-
-  ges_pipeline_set_mode (self, DEFAULT_TIMELINE_MODE);
 
   return;
 
@@ -987,7 +997,7 @@ _unlink_track (GESPipeline * self, GESTrack * track)
 /**
  * ges_pipeline_set_timeline:
  * @pipeline: A #GESPipeline
- * @timeline: (transfer full): The timeline to set for @pipeline
+ * @timeline: (transfer floating): The timeline to set for @pipeline
  *
  * Takes the given timeline and sets it as the #GESPipeline:timeline for
  * the pipeline.
@@ -1299,7 +1309,7 @@ ges_pipeline_set_mode (GESPipeline * pipeline, GESPipelineFlags mode)
  * the image is used. You can retrieve these caps from the returned sample
  * with gst_sample_get_caps().
  *
- * Returns: (transfer full): A sample of @self's current image preview in
+ * Returns: (transfer full) (nullable): A sample of @self's current image preview in
  * the format given by @caps, or %NULL if an error prevented fetching the
  * sample.
  */
@@ -1331,8 +1341,7 @@ ges_pipeline_get_thumbnail (GESPipeline * self, GstCaps * caps)
  * native size
  * @format: The desired mime type (for example, "image/jpeg")
  * @location: The path to save the thumbnail to
- * @error: (out) (allow-none) (transfer full): An error to be set in case
- * something goes wrong, or %NULL to ignore
+ * @error: An error to be set in case something goes wrong, or %NULL to ignore
  *
  * Saves the currently displayed image of the pipeline in preview to the
  * given location, in the specified dimensions and format.
@@ -1397,7 +1406,7 @@ ges_pipeline_save_thumbnail (GESPipeline * self, int width, int
  *
  * See ges_pipeline_get_thumbnail().
  *
- * Returns: (transfer full): A sample of @self's current image preview in
+ * Returns: (transfer full) (nullable): A sample of @self's current image preview in
  * the "RGB" format, scaled to @width and @height, or %NULL if an error
  * prevented fetching the sample.
  */
@@ -1431,7 +1440,7 @@ ges_pipeline_get_thumbnail_rgb24 (GESPipeline * self, gint width, gint height)
  *
  * Gets the #GESPipeline:video-sink of the pipeline.
  *
- * Returns: (transfer full): The video sink used by @self for preview.
+ * Returns: (transfer full) (nullable): The video sink used by @self for preview.
  */
 GstElement *
 ges_pipeline_preview_get_video_sink (GESPipeline * self)
@@ -1449,7 +1458,7 @@ ges_pipeline_preview_get_video_sink (GESPipeline * self)
 /**
  * ges_pipeline_preview_set_video_sink:
  * @self: A #GESPipeline in #GST_STATE_NULL
- * @sink: (transfer none): A video sink for @self to use for preview
+ * @sink: (transfer none) (nullable): A video sink for @self to use for preview
  *
  * Sets the #GESPipeline:video-sink of the pipeline.
  */
@@ -1468,7 +1477,7 @@ ges_pipeline_preview_set_video_sink (GESPipeline * self, GstElement * sink)
  *
  * Gets the #GESPipeline:audio-sink of the pipeline.
  *
- * Returns: (transfer full): The audio sink used by @self for preview.
+ * Returns: (transfer full) (nullable): The audio sink used by @self for preview.
  */
 GstElement *
 ges_pipeline_preview_get_audio_sink (GESPipeline * self)
@@ -1486,7 +1495,7 @@ ges_pipeline_preview_get_audio_sink (GESPipeline * self)
 /**
  * ges_pipeline_preview_set_audio_sink:
  * @self: A #GESPipeline in #GST_STATE_NULL
- * @sink: (transfer none): A audio sink for @self to use for preview
+ * @sink: (transfer none) (nullable): A audio sink for @self to use for preview
  *
  * Sets the #GESPipeline:audio-sink of the pipeline.
  */

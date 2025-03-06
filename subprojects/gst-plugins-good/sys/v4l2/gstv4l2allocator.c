@@ -357,7 +357,6 @@ gst_v4l2_allocator_release (GstV4l2Allocator * allocator, GstV4l2Memory * mem)
 
   switch (allocator->memory) {
     case V4L2_MEMORY_DMABUF:
-      close (mem->dmafd);
       mem->dmafd = -1;
       break;
     case V4L2_MEMORY_USERPTR:
@@ -396,8 +395,7 @@ gst_v4l2_allocator_free (GstAllocator * gallocator, GstMemory * gmem)
         obj->munmap (mem->data, group->planes[mem->plane].length);
     }
 
-    /* This apply for both mmap with expbuf, and dmabuf imported memory */
-    if (mem->dmafd >= 0)
+    if (allocator->memory == V4L2_MEMORY_MMAP && mem->dmafd >= 0)
       close (mem->dmafd);
   }
 
@@ -1134,7 +1132,7 @@ gst_v4l2_allocator_import_dmabuf (GstV4l2Allocator * allocator,
   if (!V4L2_TYPE_IS_MULTIPLANAR (obj->type)) {
     group->buffer.bytesused = group->planes[0].bytesused;
     group->buffer.length = group->planes[0].length;
-    group->buffer.m.fd = group->planes[0].m.userptr;
+    group->buffer.m.fd = group->planes[0].m.fd;
 
     /* FIXME Check if data_offset > 0 and fail for non-multi-planar */
     g_assert (group->planes[0].data_offset == 0);
@@ -1399,7 +1397,7 @@ gst_v4l2_allocator_dqbuf (GstV4l2Allocator * allocator,
 error:
   if (errno == EPIPE) {
     GST_DEBUG_OBJECT (allocator, "broken pipe signals last buffer");
-    return GST_FLOW_EOS;
+    return GST_V4L2_FLOW_LAST_BUFFER;
   }
 
   GST_ERROR_OBJECT (allocator, "failed dequeuing a %s buffer: %s",

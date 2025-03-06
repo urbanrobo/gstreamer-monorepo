@@ -424,7 +424,7 @@ GST_START_TEST (test_structure_new)
   GstStructure *s;
   GError *e;
   GQuark domain;
-  gboolean bool;
+  gboolean get_bool;
   gint num, den;
   GstClockTime clocktime;
   guint64 uint64;
@@ -448,8 +448,8 @@ GST_START_TEST (test_structure_new)
   fail_if (gst_structure_has_field (s, "key"));
   fail_unless_equals_int (gst_structure_n_fields (s), 4);
 
-  fail_unless (gst_structure_get_boolean (s, "bool", &bool));
-  fail_unless (bool);
+  fail_unless (gst_structure_get_boolean (s, "bool", &get_bool));
+  fail_unless (get_bool);
 
   fail_unless (gst_structure_get_fraction (s, "fraction", &num, &den));
   fail_unless_equals_int (num, 1);
@@ -779,7 +779,7 @@ GST_START_TEST (test_serialize_nested_structures)
       ", main-sub1=(structure)[type-b, machine-type=(int)0;]"
       ", main-sub2=(structure)[type-a, plugin-filename=(string)\"/home/user/lib/lib\\ with\\ spaces.dll\", machine-type=(int)1;]"
       ", main-sub3=(structure)[type-b, plugin-filename=(string)/home/user/lib/lib_no_spaces.so, machine-type=(int)1;]"
-      ";";
+      ", main-sub4=(structure){ [s1, a=(int)1;], [s2, b=(int)2;] }" ";";
 
   s = gst_structure_from_string (str1, &end);
   fail_unless (s != NULL);
@@ -787,7 +787,7 @@ GST_START_TEST (test_serialize_nested_structures)
   GST_DEBUG ("not parsed part : %s", end);
   fail_unless (*end == '\0');
 
-  fail_unless (gst_structure_n_fields (s) == 3);
+  fail_unless (gst_structure_n_fields (s) == 4);
 
   fail_unless (gst_structure_has_field_typed (s, "main-sub1",
           GST_TYPE_STRUCTURE));
@@ -795,7 +795,7 @@ GST_START_TEST (test_serialize_nested_structures)
   str2 = gst_structure_serialize (s, GST_SERIALIZE_FLAG_NONE);
   fail_unless (str2 != NULL);
 
-  fail_unless (g_str_equal (str1, str2));
+  fail_unless_equals_string (str1, str2);
 
   g_free (str2);
 
@@ -1018,6 +1018,22 @@ GST_START_TEST (test_flagset)
 
 GST_END_TEST;
 
+GST_START_TEST (test_flags)
+{
+  GstStructure *s;
+  GstSeekFlags flags = GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_KEY_UNIT;
+  guint parsed_flags = 0;
+
+  s = gst_structure_new ("test-struct", "test-seek-flags",
+      GST_TYPE_SEEK_FLAGS, flags, NULL);
+  fail_unless (gst_structure_get_flags (s, "test-seek-flags",
+          GST_TYPE_SEEK_FLAGS, &parsed_flags));
+  fail_unless (flags == (GstSeekFlags) parsed_flags);
+  gst_structure_free (s);
+}
+
+GST_END_TEST;
+
 static Suite *
 gst_structure_suite (void)
 {
@@ -1050,6 +1066,7 @@ gst_structure_suite (void)
   tcase_add_test (tc_chain, test_map_in_place);
   tcase_add_test (tc_chain, test_filter_and_map_in_place);
   tcase_add_test (tc_chain, test_flagset);
+  tcase_add_test (tc_chain, test_flags);
   return s;
 }
 

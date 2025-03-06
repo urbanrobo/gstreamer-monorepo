@@ -41,7 +41,7 @@ plugins_cache = join_paths(meson.current_source_dir(), 'plugins', 'gst_plugins_c
 if plugins.length() == 0
     message('All base plugins have been disabled')
 elif plugins_cache_generator.found()
-    plugins_doc_dep = custom_target('base-plugins-doc-cache',
+    gst_plugins_doc_dep = custom_target('base-plugins-doc-cache',
         command: [plugins_cache_generator, plugins_cache, '@OUTPUT@', '@INPUT@'],
         input: plugins,
         output: 'gst_plugins_cache.json',
@@ -168,6 +168,7 @@ foreach lib: libs
       gi_order_generated_subpages: true,
       dependencies: deps,
       install: false,
+      depends: gir[0],
   )]
 endforeach
 
@@ -216,7 +217,7 @@ foreach plugin_name: list_plugin_res.stdout().split(':')
           '../ext/*/*.[cmh]',
           '../gst/*/*.[ch]',
         ],
-        dependencies: [gst_dep, plugins],
+        dependencies: [gst_dep],
         gst_order_generated_subpages: true,
         gst_cache_file: plugins_cache,
         gst_plugin_name: plugin_name,

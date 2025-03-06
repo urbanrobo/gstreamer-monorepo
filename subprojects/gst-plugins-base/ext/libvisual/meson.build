@@ -13,10 +13,9 @@ if libvisual_dep.found()
     libvisual_sources,
     c_args : gst_plugins_base_args,
     include_directories: [configinc, libsinc],
-    dependencies : glib_deps + [libvisual_dep, audio_dep, video_dep, pbutils_dep, gst_dep, gst_base_dep],
+    dependencies : [libvisual_dep, audio_dep, video_dep, pbutils_dep, gst_dep, gst_base_dep],
     install : true,
     install_dir : plugins_install_dir,
   )
-  pkgconfig.generate(gstlibvisual, install_dir : plugins_pkgconfig_install_dir)
   plugins += [gstlibvisual]
 endif

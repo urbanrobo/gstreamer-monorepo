@@ -46,6 +46,7 @@
 
 #include <gst/gst.h>
 #include <gst/base/gsttypefindhelper.h>
+#include <glib/gi18n-lib.h>
 
 #include "gstimagesequencesrc.h"
 
@@ -144,7 +145,7 @@ static gboolean
 gst_image_sequence_src_uri_set_uri (GstURIHandler * handler, const gchar * uri,
     GError ** err)
 {
-  gchar *hostname = NULL, *location = NULL, *tmp;
+  gchar *hostname = NULL, *location = NULL, *path, *tmp;
   gboolean ret = FALSE;
   GstImageSequenceSrc *self = GST_IMAGE_SEQUENCE_SRC (handler);
   GstUri *ruri = gst_uri_from_string (uri);
@@ -160,9 +161,11 @@ gst_image_sequence_src_uri_set_uri (GstURIHandler * handler, const gchar * uri,
   LOCK (self);
   g_clear_pointer (&self->uri, gst_uri_unref);
   self->uri = ruri;
-  tmp = gst_filename_to_uri (gst_uri_get_path (ruri), err);
+  path = gst_uri_get_path (ruri);
+  tmp = gst_filename_to_uri (path, err);
   location = g_filename_from_uri (tmp, &hostname, err);
   g_free (tmp);
+  g_free (path);
   query = gst_uri_get_query_table (ruri);
   if (!location || (err != NULL && *err != NULL)) {
     GST_WARNING_OBJECT (self, "Invalid URI '%s' for imagesequencesrc: %s", uri,
@@ -354,7 +357,7 @@ gst_image_sequence_src_init (GstImageSequenceSrc * self)
   self->start_index = DEFAULT_START_INDEX;
   self->index = 0;
   self->stop_index = DEFAULT_STOP_INDEX;
-  self->path = NULL;
+  self->path = g_strdup (DEFAULT_LOCATION);
   self->caps = NULL;
   self->n_frames = 0;
   self->fps_n = 30;
@@ -486,24 +489,25 @@ static gint
 gst_image_sequence_src_count_frames (GstImageSequenceSrc * self,
     gboolean can_read)
 {
+  gchar *previous_filename = NULL;
   if (can_read && self->stop_index < 0 && self->path) {
     gint i;
 
     for (i = self->start_index;; i++) {
       gchar *filename = g_strdup_printf (self->path, i);
-
-      if (!g_file_test (filename, G_FILE_TEST_IS_REGULAR)) {
+      if (!g_file_test (filename, G_FILE_TEST_IS_REGULAR)
+          || !g_strcmp0 (previous_filename, filename)) {
         i--;
         g_free (filename);
         break;
       }
-
-      g_free (filename);
+      g_free (previous_filename);
+      previous_filename = filename;
     }
     if (i > self->start_index)
       self->stop_index = i;
   }
-
+  g_free (previous_filename);
   if (self->stop_index >= self->start_index)
     self->n_frames = self->stop_index - self->start_index + 1;
   return self->n_frames;
@@ -529,6 +533,8 @@ gst_image_sequence_src_set_caps (GstImageSequenceSrc * self, GstCaps * caps)
   gst_pad_set_caps (GST_BASE_SRC_PAD (self), new_caps);
 
   GST_DEBUG_OBJECT (self, "Setting new caps: %" GST_PTR_FORMAT, new_caps);
+
+  gst_caps_unref (new_caps);
 }
 
 /* Call with LOCK */
@@ -560,7 +566,12 @@ gst_image_sequence_src_get_filename (GstImageSequenceSrc * self)
   gchar *filename;
 
   GST_DEBUG ("Reading filename at index %d.", self->index);
-  filename = g_strdup_printf (self->path, self->index);
+  if (self->path != NULL) {
+    filename = g_strdup_printf (self->path, self->index);
+  } else {
+    GST_WARNING_OBJECT (self, "No filename location set!");
+    filename = NULL;
+  }
 
   return filename;
 }
@@ -600,13 +611,13 @@ gst_image_sequence_src_create (GstPushSrc * src, GstBuffer ** buffer)
   UNLOCK (self);
 
   if (!filename)
-    goto handle_error;
+    goto error_no_filename;
 
   ret = g_file_get_contents (filename, &data, &size, &error);
   if (!ret)
     goto handle_error;
 
-  buf = gst_buffer_new_wrapped_full (0, data, size, 0, size, NULL, g_free);
+  buf = gst_buffer_new_wrapped (data, size);
 
   if (!self->caps) {
     GstCaps *caps;
@@ -641,6 +652,12 @@ gst_image_sequence_src_create (GstPushSrc * src, GstBuffer ** buffer)
   self->index += self->reverse ? -1 : 1;
   return GST_FLOW_OK;
 
+error_no_filename:
+  {
+    GST_ELEMENT_ERROR (self, RESOURCE, NOT_FOUND,
+        (_("No file name specified for reading.")), (NULL));
+    return GST_FLOW_ERROR;
+  }
 handle_error:
   {
     if (error != NULL) {

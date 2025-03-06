@@ -187,7 +187,7 @@ msdk_init_msdk_session (mfxIMPL impl, mfxVersion * pver,
   mfxStatus sts = MFX_ERR_NONE;
   mfxLoader loader = NULL;
   mfxSession session = NULL;
-  uint32_t impl_idx = 0;
+  mfxU32 impl_idx = 0;
   mfxConfig cfg;
   mfxVariant impl_value;
 
@@ -551,6 +551,18 @@ gst_msdk_is_msdk_buffer (GstBuffer * buf)
     return TRUE;
   else
     return FALSE;
+}
+
+gboolean
+gst_msdk_is_va_mem (GstMemory * mem)
+{
+  GstAllocator *allocator;
+
+  allocator = mem->allocator;
+  if (!allocator)
+    return FALSE;
+
+  return g_str_equal (allocator->mem_type, "VAMemory");
 }
 
 mfxFrameSurface1 *

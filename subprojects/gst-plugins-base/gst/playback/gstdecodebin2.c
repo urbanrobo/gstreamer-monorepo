@@ -92,7 +92,7 @@
 #include "config.h"
 #endif
 
-#include <gst/gst-i18n-plugin.h>
+#include <glib/gi18n-lib.h>
 
 #include <string.h>
 #include <gst/gst.h>
@@ -1582,7 +1582,7 @@ analyze_new_pad (GstDecodeBin * dbin, GstElement * src, GstPad * pad,
     if (group && !g_list_find (group->children, chain)) {
       g_assert (new_chain != NULL);
       *new_chain = chain = gst_decode_chain_new (dbin, group, pad);
-      group->children = g_list_prepend (group->children, chain);
+      group->children = g_list_append (group->children, chain);
     }
     CHAIN_MUTEX_UNLOCK (oldchain);
     if (!group) {
@@ -1701,7 +1701,7 @@ analyze_new_pad (GstDecodeBin * dbin, GstElement * src, GstPad * pad,
   if (!dbin->expose_allstreams && gst_caps_is_fixed (caps)) {
     guint i;
     const GList *tmps;
-    gboolean dontuse = FALSE;
+    gboolean dontuse = FALSE, found_finals = FALSE;
 
     GST_DEBUG ("Checking if we can abort early");
 
@@ -1737,8 +1737,11 @@ analyze_new_pad (GstDecodeBin * dbin, GstElement * src, GstPad * pad,
               gst_decode_bin_signals[SIGNAL_AUTOPLUG_CONTINUE], 0, dpad, tcaps,
               &apcontinue);
 
-          /* If autoplug-continue returns TRUE and the caps are not final, don't use them */
-          if (apcontinue && !are_final_caps (dbin, tcaps))
+          /* If autoplug-continue returns TRUE and the caps are not final, and
+           * we haven't found any way to output finals yet, don't use them */
+          if (are_final_caps (dbin, tcaps))
+            found_finals = TRUE;
+          else if (apcontinue && !found_finals)
             dontuse = TRUE;
           gst_caps_unref (tcaps);
         }
@@ -4672,6 +4675,7 @@ retry:
   if (G_UNLIKELY (dbin->shutdown)) {
     GST_WARNING_OBJECT (dbin, "Currently, shutting down, aborting exposing");
     DYN_UNLOCK (dbin);
+    g_string_free (missing_plugin_details, TRUE);
     return FALSE;
   }
   DYN_UNLOCK (dbin);
@@ -5012,7 +5016,7 @@ source_pad_event_probe (GstPad * pad, GstPadProbeInfo * info,
   GstDecodePad *dpad = user_data;
   gboolean res = TRUE;
 
-  GST_LOG_OBJECT (pad, "%s dpad:%p", GST_EVENT_TYPE_NAME (event), dpad);
+  GST_LOG_OBJECT (pad, "event %s", GST_EVENT_TYPE_NAME (event));
 
   if (GST_EVENT_TYPE (event) == GST_EVENT_EOS) {
     GST_DEBUG_OBJECT (pad, "we received EOS");
@@ -5159,8 +5163,8 @@ gst_decode_pad_query (GstPad * pad, GstObject * parent, GstQuery * query)
 
     ret = FALSE;
     GST_DEBUG_OBJECT (dpad->dbin,
-        "calling autoplug-query for %s (element %s): %" GST_PTR_FORMAT,
-        GST_PAD_NAME (dpad), GST_ELEMENT_NAME (delem->element), query);
+        "calling autoplug-query for %" GST_PTR_FORMAT " (element %s): %"
+        GST_PTR_FORMAT, dpad, GST_ELEMENT_NAME (delem->element), query);
     g_signal_emit (G_OBJECT (dpad->dbin),
         gst_decode_bin_signals[SIGNAL_AUTOPLUG_QUERY], 0, dpad, delem->element,
         query, &ret);

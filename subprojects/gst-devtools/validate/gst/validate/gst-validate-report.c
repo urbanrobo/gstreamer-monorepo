@@ -25,6 +25,13 @@
 #  include "config.h"
 #endif
 
+/**
+ * SECTION:gstvalidatereport
+ * @title: GstValidateReport
+ * @short_description: A Validate report
+ * @see_also: #GstValidateRunner
+ *
+ */
 
 #include <stdlib.h>             /* exit */
 #include <stdio.h>              /* fprintf */
@@ -108,6 +115,7 @@ GST_DEBUG_CATEGORY_STATIC (gst_validate_report_debug);
   (g_mutex_unlock (&((GstValidateReport *) r)->shadow_reports_lock));		\
   } G_STMT_END
 
+
 static GstValidateIssue *
 gst_validate_issue_ref (GstValidateIssue * issue)
 {
@@ -137,11 +145,84 @@ G_DEFINE_BOXED_TYPE (GstValidateIssue, gst_validate_issue,
     (GBoxedCopyFunc) gst_validate_issue_ref,
     (GBoxedFreeFunc) gst_validate_issue_unref);
 
-GstValidateIssueId
+guint32
 gst_validate_issue_get_id (GstValidateIssue * issue)
 {
   return issue->issue_id;
 }
+
+#define MAKE_GETTER_COPY(type, field, copier) \
+  type gst_validate_report_get_##field(GstValidateReport *report) { return copier(report->field); }
+
+#define MAKE_GETTER(type, field) \
+  type gst_validate_report_get_##field(GstValidateReport *report) { return report->field; }
+
+/**
+ * gst_validate_report_get_level:
+ *
+ * Returns: report level
+ * Since: 1.22
+ */
+MAKE_GETTER (GstValidateReportLevel, level);
+/**
+ * gst_validate_report_get_timestamp:
+ *
+ * Returns: report timestamp
+ * Since: 1.22
+ */
+MAKE_GETTER (GstClockTime, timestamp);
+/**
+ * gst_validate_report_get_reporting_level:
+ *
+ * Returns: reporting level
+ * Since: 1.22
+ */
+MAKE_GETTER (GstValidateReportingDetails, reporting_level);
+/**
+ * gst_validate_report_get_issue:
+ *
+ * Returns: (transfer full): report issue
+ * Since: 1.22
+ */
+MAKE_GETTER_COPY (GstValidateIssue *, issue, gst_validate_issue_ref);
+/**
+ * gst_validate_report_get_reporter:
+ *
+ * Returns: (transfer full): report reporter
+ * Since: 1.22
+ */
+MAKE_GETTER_COPY (GstValidateReporter *, reporter, gst_object_ref);
+/**
+ * gst_validate_report_get_message:
+ *
+ * Returns: (transfer full): report message
+ * Since: 1.22
+ */
+MAKE_GETTER_COPY (gchar *, message, g_strdup);
+/**
+ * gst_validate_report_get_reporter_name:
+ *
+ * Returns: (transfer full): report issue
+ * Since: 1.22
+ */
+MAKE_GETTER_COPY (gchar *, reporter_name, g_strdup);
+/**
+ * gst_validate_report_get_trace:
+ *
+ * Returns: (transfer full) (nullable): report backtrace
+ * Since: 1.22
+ */
+MAKE_GETTER_COPY (gchar *, trace, g_strdup);
+/**
+ * gst_validate_report_get_dotfile_name:
+ *
+ * Returns: (transfer full) (nullable): report dot file name
+ * Since: 1.22
+ */
+MAKE_GETTER_COPY (gchar *, dotfile_name, g_strdup);
+
+#undef MAKE_GETTER
+#undef MAKE_GETTER_COPY
 
 /**
  * gst_validate_issue_new_full:
@@ -240,10 +321,10 @@ void
 gst_validate_issue_register (GstValidateIssue * issue)
 {
   g_return_if_fail (g_hash_table_lookup (_gst_validate_issues,
-          (gpointer) gst_validate_issue_get_id (issue)) == NULL);
+          GINT_TO_POINTER (gst_validate_issue_get_id (issue))) == NULL);
 
   g_hash_table_insert (_gst_validate_issues,
-      (gpointer) gst_validate_issue_get_id (issue), issue);
+      GINT_TO_POINTER (gst_validate_issue_get_id (issue)), issue);
 }
 
 #define REGISTER_VALIDATE_ISSUE(lvl,id,sum,desc)			\
@@ -453,6 +534,8 @@ gst_validate_report_load_issues (void)
       GST_VALIDATE_ISSUE_FLAGS_FULL_DETAILS);
   REGISTER_VALIDATE_ISSUE (ISSUE, SCENARIO_ACTION_EXECUTION_ISSUE,
       "An issue happened during the execution of a scenario", NULL);
+  REGISTER_VALIDATE_ISSUE (WARNING, SCENARIO_ACTION_ENDED_EARLY,
+      "Got EOS before an action playback time", NULL);
   REGISTER_VALIDATE_ISSUE (CRITICAL, CONFIG_LATENCY_TOO_HIGH,
       "The pipeline latency is higher than the maximum allowed by the scenario",
       NULL);
@@ -663,10 +746,16 @@ gst_validate_report_deinit (void)
   g_clear_object (&server_connection);
 }
 
+/**
+ * gst_validate_issue_from_id:
+ * @issue_id: The issue id
+ *
+ * Returns: (nullable): The issue if found or NULL otherwise
+ */
 GstValidateIssue *
 gst_validate_issue_from_id (GstValidateIssueId issue_id)
 {
-  return g_hash_table_lookup (_gst_validate_issues, (gpointer) issue_id);
+  return g_hash_table_lookup (_gst_validate_issues, GINT_TO_POINTER (issue_id));
 }
 
 /* TODO how are these functions going to work with extensions */
@@ -747,7 +836,7 @@ gst_validate_report_check_abort (GstValidateReport * report)
   return FALSE;
 }
 
-GstValidateIssueId
+guint32
 gst_validate_report_get_issue_id (GstValidateReport * report)
 {
   return gst_validate_issue_get_id (report->issue);
@@ -1379,7 +1468,7 @@ gst_validate_skip_test (const gchar * format, ...)
 static void
 print_issue (gpointer key, GstValidateIssue * issue, gpointer user_data)
 {
-  gst_validate_printf (NULL, "\n# `%s` (%" G_GUINTPTR_FORMAT ")\n\n",
+  gst_validate_printf (NULL, "\n# `%s` (%" G_GUINT32_FORMAT ")\n\n",
       g_quark_to_string (issue->issue_id), issue->issue_id);
   gst_validate_printf (NULL, "%c%s\n\n", g_ascii_toupper (issue->summary[0]),
       &issue->summary[1]);

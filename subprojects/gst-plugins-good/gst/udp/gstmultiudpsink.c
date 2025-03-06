@@ -333,7 +333,7 @@ gst_multiudpsink_class_init (GstMultiUDPSinkClass * klass)
    */
   g_object_class_install_property (G_OBJECT_CLASS (klass), PROP_SEND_DUPLICATES,
       g_param_spec_boolean ("send-duplicates", "Send Duplicates",
-          "When a distination/port pair is added multiple times, send packets "
+          "When a destination/port pair is added multiple times, send packets "
           "multiple times as well", DEFAULT_SEND_DUPLICATES,
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
@@ -1299,14 +1299,26 @@ gst_multiudpsink_start (GstBaseSink * bsink)
       g_object_unref (bind_iaddr);
       family = g_socket_address_get_family (G_SOCKET_ADDRESS (bind_addr));
 
-      if ((sink->used_socket =
-              g_socket_new (family, G_SOCKET_TYPE_DATAGRAM,
-                  G_SOCKET_PROTOCOL_UDP, &err)) == NULL) {
-        g_object_unref (bind_addr);
-        goto no_socket;
+      if (family == G_SOCKET_FAMILY_IPV4) {
+        if ((sink->used_socket =
+                g_socket_new (family, G_SOCKET_TYPE_DATAGRAM,
+                    G_SOCKET_PROTOCOL_UDP, &err)) == NULL) {
+          g_object_unref (bind_addr);
+          goto no_socket;
+        }
+
+        g_socket_bind (sink->used_socket, bind_addr, TRUE, &err);
+      } else {
+        if ((sink->used_socket_v6 =
+                g_socket_new (family, G_SOCKET_TYPE_DATAGRAM,
+                    G_SOCKET_PROTOCOL_UDP, &err)) == NULL) {
+          g_object_unref (bind_addr);
+          goto no_socket;
+        }
+
+        g_socket_bind (sink->used_socket_v6, bind_addr, TRUE, &err);
       }
 
-      g_socket_bind (sink->used_socket, bind_addr, TRUE, &err);
       g_object_unref (bind_addr);
       if (err != NULL)
         goto bind_error;

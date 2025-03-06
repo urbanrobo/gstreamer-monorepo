@@ -44,8 +44,11 @@
 #include <gst/video/video.h>
 #include <gst/video/gstvideometa.h>
 #include <gst/video/gstvideopool.h>
-#include "gst/gst-i18n-plugin.h"
+#include <glib/gi18n-lib.h>
 #include <jerror.h>
+
+/* Disable libjpeg-turbo support for now, due to unresolved cornercases */
+#undef JCS_EXTENSIONS
 
 #define MIN_WIDTH  1
 #define MAX_WIDTH  65535
@@ -601,10 +604,16 @@ static gboolean
 gst_jpeg_dec_set_format (GstVideoDecoder * dec, GstVideoCodecState * state)
 {
   GstJpegDec *jpeg = GST_JPEG_DEC (dec);
+  GstStructure *structure;
+  gboolean parsed = FALSE;
 
   if (jpeg->input_state)
     gst_video_codec_state_unref (jpeg->input_state);
   jpeg->input_state = gst_video_codec_state_ref (state);
+
+  structure = gst_caps_get_structure (state->caps, 0);
+  gst_structure_get_boolean (structure, "parsed", &parsed);
+  gst_video_decoder_set_packetized (dec, parsed);
 
   return TRUE;
 }
@@ -871,7 +880,7 @@ gst_jpeg_dec_decode_direct (GstJpegDec * dec, GstVideoFrame * frame,
   gint lines, v_samp[3];
   guchar *base[3], *last[3];
   gint stride[3];
-  guint height, field_height;
+  guint field_height;
 
   line[0] = y;
   line[1] = u;
@@ -884,7 +893,7 @@ gst_jpeg_dec_decode_direct (GstJpegDec * dec, GstVideoFrame * frame,
   if (G_UNLIKELY (v_samp[0] > 2 || v_samp[1] > 2 || v_samp[2] > 2))
     goto format_not_supported;
 
-  height = field_height = GST_VIDEO_FRAME_HEIGHT (frame);
+  field_height = GST_VIDEO_FRAME_HEIGHT (frame);
 
   /* XXX: division by 2 here might not be a good idea yes. But we are doing this
    * already in gst_jpeg_dec_handle_frame() for interlaced jpeg */
@@ -915,7 +924,7 @@ gst_jpeg_dec_decode_direct (GstJpegDec * dec, GstVideoFrame * frame,
 
 #ifdef JCS_EXTENSIONS
   if (dec->format_convert) {
-    gint row_stride = dec->cinfo.output_width * dec->cinfo.output_components;
+    gint row_stride = GST_VIDEO_FRAME_PLANE_STRIDE (frame, 0);
     guchar *bufbase = GST_VIDEO_FRAME_PLANE_DATA (frame, 0);
 
     if (num_fields == 2) {
@@ -934,7 +943,7 @@ gst_jpeg_dec_decode_direct (GstJpegDec * dec, GstVideoFrame * frame,
   } else
 #endif
   {
-    for (i = 0; i < height; i += v_samp[0] * DCTSIZE) {
+    for (i = 0; i < field_height; i += v_samp[0] * DCTSIZE) {
       for (j = 0; j < (v_samp[0] * DCTSIZE); ++j) {
         /* Y */
         line[0][j] = base[0] + (i + j) * stride[0];
@@ -1008,16 +1017,65 @@ gst_fmt_to_jpeg_turbo_ext_fmt (GstVideoFormat gstfmt)
       return 0;
   }
 }
-#endif
 
 static void
+gst_jpeg_turbo_parse_ext_fmt_convert (GstJpegDec * dec, gint * clrspc)
+{
+  GstCaps *peer_caps, *dec_caps;
+
+  dec_caps = gst_static_caps_get (&gst_jpeg_dec_src_pad_template.static_caps);
+  peer_caps =
+      gst_pad_peer_query_caps (GST_VIDEO_DECODER_SRC_PAD (dec), dec_caps);
+  gst_caps_unref (dec_caps);
+
+  GST_DEBUG ("Received caps from peer: %" GST_PTR_FORMAT, peer_caps);
+  dec->format_convert = FALSE;
+  if (!gst_caps_is_empty (peer_caps)) {
+    GstStructure *peerstruct;
+    const gchar *peerformat;
+    GstVideoFormat peerfmt;
+
+    if (!gst_caps_is_fixed (peer_caps))
+      peer_caps = gst_caps_fixate (peer_caps);
+
+    peerstruct = gst_caps_get_structure (peer_caps, 0);
+    peerformat = gst_structure_get_string (peerstruct, "format");
+    peerfmt = gst_video_format_from_string (peerformat);
+
+    switch (peerfmt) {
+      case GST_VIDEO_FORMAT_RGB:
+      case GST_VIDEO_FORMAT_RGBx:
+      case GST_VIDEO_FORMAT_xRGB:
+      case GST_VIDEO_FORMAT_RGBA:
+      case GST_VIDEO_FORMAT_ARGB:
+      case GST_VIDEO_FORMAT_BGR:
+      case GST_VIDEO_FORMAT_BGRx:
+      case GST_VIDEO_FORMAT_xBGR:
+      case GST_VIDEO_FORMAT_BGRA:
+      case GST_VIDEO_FORMAT_ABGR:
+        if (clrspc)
+          *clrspc = JCS_RGB;
+        dec->format = peerfmt;
+        dec->format_convert = TRUE;
+        dec->libjpeg_ext_format = gst_fmt_to_jpeg_turbo_ext_fmt (peerfmt);
+        break;
+      default:
+        break;
+    }
+  }
+  gst_caps_unref (peer_caps);
+  GST_DEBUG_OBJECT (dec, "format_convert=%d", dec->format_convert);
+}
+#endif
+
+static gboolean
 gst_jpeg_dec_negotiate (GstJpegDec * dec, gint width, gint height, gint clrspc,
     gboolean interlaced)
 {
   GstVideoCodecState *outstate;
   GstVideoInfo *info;
   GstVideoFormat format;
-  GstCaps *peer_caps, *dec_caps;
+  gboolean res;
 
 #ifdef JCS_EXTENSIONS
   if (dec->format_convert) {
@@ -1047,62 +1105,22 @@ gst_jpeg_dec_negotiate (GstJpegDec * dec, gint width, gint height, gint clrspc,
         height == GST_VIDEO_INFO_HEIGHT (info) &&
         format == GST_VIDEO_INFO_FORMAT (info)) {
       gst_video_codec_state_unref (outstate);
-      return;
+      return TRUE;
     }
     gst_video_codec_state_unref (outstate);
   }
 #ifdef JCS_EXTENSIONS
-  dec_caps = gst_static_caps_get (&gst_jpeg_dec_src_pad_template.static_caps);
-  peer_caps =
-      gst_pad_peer_query_caps (GST_VIDEO_DECODER_SRC_PAD (dec), dec_caps);
-  gst_caps_unref (dec_caps);
-
-  GST_DEBUG ("Received caps from peer: %" GST_PTR_FORMAT, peer_caps);
-  dec->format_convert = FALSE;
-  if (!gst_caps_is_empty (peer_caps)) {
-    GstStructure *peerstruct;
-    const gchar *peerformat;
-    GstVideoFormat peerfmt;
-
-    if (!gst_caps_is_fixed (peer_caps))
-      peer_caps = gst_caps_fixate (peer_caps);
-
-    peerstruct = gst_caps_get_structure (peer_caps, 0);
-    peerformat = gst_structure_get_string (peerstruct, "format");
-    peerfmt = gst_video_format_from_string (peerformat);
-
-    /* libjpeg-turbo only supports some colorspace conversions, see
-     * https://raw.githubusercontent.com/libjpeg-turbo/libjpeg-turbo/main/libjpeg.txt */
-    switch (peerfmt) {
-      case GST_VIDEO_FORMAT_RGBx:
-      case GST_VIDEO_FORMAT_xRGB:
-      case GST_VIDEO_FORMAT_RGBA:
-      case GST_VIDEO_FORMAT_ARGB:
-      case GST_VIDEO_FORMAT_BGR:
-      case GST_VIDEO_FORMAT_BGRx:
-      case GST_VIDEO_FORMAT_xBGR:
-      case GST_VIDEO_FORMAT_BGRA:
-      case GST_VIDEO_FORMAT_ABGR:
-        if (clrspc == JCS_RGB) {
-          /* RGB -> other RGB formats */
-          format = peerfmt;
-          dec->format_convert = TRUE;
-          dec->libjpeg_ext_format = gst_fmt_to_jpeg_turbo_ext_fmt (peerfmt);
-        }
-        break;
-        /* TODO: implement conversion from/to other supported colorspaces */
-      default:
-        break;
-    }
-  }
-  dec->format = format;
-  gst_caps_unref (peer_caps);
-  GST_DEBUG_OBJECT (dec, "format_convert=%d", dec->format_convert);
+  /* Determine if libjpeg-turbo direct format conversion can be used
+   * with current caps and if so, adjust $dec to enable it and $clrspc
+   * accordingly. */
+  gst_jpeg_turbo_parse_ext_fmt_convert (dec, &clrspc);
 #endif
 
   outstate =
       gst_video_decoder_set_output_state (GST_VIDEO_DECODER (dec), format,
       width, height, dec->input_state);
+  if (!outstate)
+    return FALSE;
 
   switch (clrspc) {
     case JCS_RGB:
@@ -1127,10 +1145,12 @@ gst_jpeg_dec_negotiate (GstJpegDec * dec, gint width, gint height, gint clrspc,
 
   gst_video_codec_state_unref (outstate);
 
-  gst_video_decoder_negotiate (GST_VIDEO_DECODER (dec));
+  res = gst_video_decoder_negotiate (GST_VIDEO_DECODER (dec));
 
   GST_DEBUG_OBJECT (dec, "max_v_samp_factor=%d", dec->cinfo.max_v_samp_factor);
   GST_DEBUG_OBJECT (dec, "max_h_samp_factor=%d", dec->cinfo.max_h_samp_factor);
+
+  return res;
 }
 
 static GstFlowReturn
@@ -1183,6 +1203,7 @@ gst_jpeg_dec_prepare_decode (GstJpegDec * dec)
   dec->cinfo.do_block_smoothing = FALSE;
   dec->cinfo.dct_method = dec->idct_method;
 #ifdef JCS_EXTENSIONS
+  gst_jpeg_turbo_parse_ext_fmt_convert (dec, NULL);
   if (dec->format_convert) {
     dec->cinfo.out_color_space = dec->libjpeg_ext_format;
     dec->cinfo.raw_data_out = FALSE;
@@ -1285,7 +1306,7 @@ gst_jpeg_dec_decode (GstJpegDec * dec, GstVideoFrame * vframe, guint width,
     GST_LOG_OBJECT (dec, "decompressing (required scanline buffer height = %u)",
         dec->cinfo.rec_outbuf_height);
 
-    /* For some widths jpeglib requires more horizontal padding than I420 
+    /* For some widths jpeglib requires more horizontal padding than I420
      * provides. In those cases we need to decode into separate buffers and then
      * copy over the data into our final picture buffer, otherwise jpeglib might
      * write over the end of a line into the beginning of the next line,
@@ -1391,7 +1412,8 @@ gst_jpeg_dec_handle_frame (GstVideoDecoder * bdec, GstVideoCodecFrame * frame)
    * to see if there are two SOF markers in the packet to detect this) */
   if (gst_video_decoder_get_packetized (bdec) &&
       dec->input_state &&
-      dec->input_state->info.height > height &&
+      dec->input_state->info.height != height && height > DCTSIZE &&
+      dec->input_state->info.height > (2 * (height - DCTSIZE)) &&
       dec->input_state->info.height <= (height * 2)
       && dec->input_state->info.width == width) {
     GST_LOG_OBJECT (dec,
@@ -1408,8 +1430,9 @@ gst_jpeg_dec_handle_frame (GstVideoDecoder * bdec, GstVideoCodecFrame * frame)
     num_fields = 1;
   }
 
-  gst_jpeg_dec_negotiate (dec, width, output_height,
-      dec->cinfo.jpeg_color_space, num_fields == 2);
+  if (!gst_jpeg_dec_negotiate (dec, width, output_height,
+          dec->cinfo.jpeg_color_space, num_fields == 2))
+    goto negotiation_failed;
 
   state = gst_video_decoder_get_output_state (bdec);
   ret = gst_video_decoder_allocate_output_frame (bdec, frame);
@@ -1539,6 +1562,12 @@ map_failed:
     GST_ELEMENT_ERROR (dec, RESOURCE, READ, (_("Failed to read memory")),
         ("gst_buffer_map() failed for READ access"));
     ret = GST_FLOW_ERROR;
+    goto exit;
+  }
+negotiation_failed:
+  {
+    GST_ELEMENT_ERROR (dec, CORE, NEGOTIATION, (NULL), ("failed to negotiate"));
+    ret = GST_FLOW_NOT_NEGOTIATED;
     goto exit;
   }
 decode_error:

@@ -584,6 +584,11 @@ parse_set_object_data (GstDVDSpu * dvdspu, guint8 type, guint8 * payload,
 
   PGS_DUMP ("Object ID %d ver %u flags 0x%02x\n", obj_id, obj_ver, flags);
 
+  if (!obj) {
+    GST_ERROR ("unknown Object ID %d", obj_id);
+    return 0;
+  }
+
   if (flags & PGS_OBJECT_UPDATE_FLAG_START_RLE) {
     obj->rle_data_ver = obj_ver;
 
@@ -592,6 +597,9 @@ parse_set_object_data (GstDVDSpu * dvdspu, guint8 type, guint8 * payload,
 
     obj->rle_data_size = GST_READ_UINT24_BE (payload);
     payload += 3;
+
+    if (end - payload > obj->rle_data_size)
+      return 0;
 
     PGS_DUMP ("%d bytes of RLE data, of %d bytes total.\n",
         (int) (end - payload), obj->rle_data_size);
@@ -604,7 +612,8 @@ parse_set_object_data (GstDVDSpu * dvdspu, guint8 type, guint8 * payload,
     PGS_DUMP ("%d bytes of additional RLE data\n", (int) (end - payload));
     /* Check that the data chunk is for this object version, and fits in the buffer */
     if (obj->rle_data_ver == obj_ver &&
-        obj->rle_data_used + end - payload <= obj->rle_data_size) {
+        end - payload <= obj->rle_data_size &&
+        obj->rle_data_used <= obj->rle_data_size - (end - payload)) {
 
       memcpy (obj->rle_data + obj->rle_data_used, payload, end - payload);
       obj->rle_data_used += end - payload;

@@ -21,12 +21,35 @@
 #include "config.h"
 #endif
 
+/**
+ * SECTION:plugin-qsv
+ *
+ * Intel Quick Sync plugin.
+ *
+ * This plugin consists of various video encoder and decoder elements.
+ * Depending on the hardware it runs on, some elements might not be registered
+ * in case that underlying hardware doesn't support the for feature.
+ *
+ * To get a list of all available elements, user can run
+ * ```sh
+ * gst-inspect-1.0 qsv
+ * ```
+ *
+ * Since: 1.22
+ */
+
 #include <gst/gst.h>
 #include <mfx.h>
-#include "gstqsvutils.h"
+#include "gstqsvav1enc.h"
+#include "gstqsvh264dec.h"
 #include "gstqsvh264enc.h"
+#include "gstqsvh265dec.h"
 #include "gstqsvh265enc.h"
+#include "gstqsvjpegdec.h"
+#include "gstqsvjpegenc.h"
+#include "gstqsvvp9dec.h"
 #include "gstqsvvp9enc.h"
+#include "gstqsvutils.h"
 #include <string.h>
 
 #ifdef G_OS_WIN32
@@ -35,16 +58,11 @@
 #include <versionhelpers.h>
 #include <gst/d3d11/gstd3d11.h>
 #else
-#include <gst/va/gstvadisplay.h>
-#include <gst/va/gstvadisplay_drm.h>
+#include <gst/va/gstva.h>
 #endif
 
 GST_DEBUG_CATEGORY (gst_qsv_debug);
 GST_DEBUG_CATEGORY (gst_qsv_allocator_debug);
-GST_DEBUG_CATEGORY (gst_qsv_encoder_debug);
-GST_DEBUG_CATEGORY (gst_qsv_h264_enc_debug);
-GST_DEBUG_CATEGORY (gst_qsv_h265_enc_debug);
-GST_DEBUG_CATEGORY (gst_qsv_vp9_enc_debug);
 
 #define GST_CAT_DEFAULT gst_qsv_debug
 
@@ -191,15 +209,20 @@ plugin_init (GstPlugin * plugin)
   mfxLoader loader;
   guint i = 0;
   GList *platform_devices = nullptr;
+  GstRank enc_rank = GST_RANK_NONE;
 
 #ifdef G_OS_WIN32
   /* D3D11 Video API is supported since Windows 8.
    * Do we want to support old OS (Windows 7 for example) with D3D9 ?? */
   if (!IsWindows8OrGreater ())
     return TRUE;
+
+  enc_rank = GST_RANK_PRIMARY;
 #endif
 
   GST_DEBUG_CATEGORY_INIT (gst_qsv_debug, "qsv", 0, "Intel Quick Sync Video");
+  GST_DEBUG_CATEGORY_INIT (gst_qsv_allocator_debug,
+      "qsvallocator", 0, "qsvallocator");
 
   loader = gst_qsv_get_loader ();
   if (!loader)
@@ -212,16 +235,6 @@ plugin_init (GstPlugin * plugin)
   }
 
   GST_INFO ("Found %d platform devices", g_list_length (platform_devices));
-
-  GST_DEBUG_CATEGORY_INIT (gst_qsv_encoder_debug,
-      "qsvencoder", 0, "qsvencoder");
-  GST_DEBUG_CATEGORY_INIT (gst_qsv_allocator_debug,
-      "gstqsvallocator", 0, "gstqsvallocator");
-  GST_DEBUG_CATEGORY_INIT (gst_qsv_h264_enc_debug,
-      "qsvh264enc", 0, "qsvh264enc");
-  GST_DEBUG_CATEGORY_INIT (gst_qsv_h265_enc_debug,
-      "qsvh265enc", 0, "qsvh265enc");
-  GST_DEBUG_CATEGORY_INIT (gst_qsv_vp9_enc_debug, "qsvvp9enc", 0, "qsvvp9enc");
 
   do {
     mfxStatus status = MFX_ERR_NONE;
@@ -246,9 +259,16 @@ plugin_init (GstPlugin * plugin)
     if (!session)
       goto next;
 
-    gst_qsv_h264_enc_register (plugin, GST_RANK_NONE, i, device, session);
-    gst_qsv_h265_enc_register (plugin, GST_RANK_NONE, i, device, session);
-    gst_qsv_vp9_enc_register (plugin, GST_RANK_NONE, i, device, session);
+    gst_qsv_h264_dec_register (plugin, GST_RANK_MARGINAL, i, device, session);
+    gst_qsv_h265_dec_register (plugin, GST_RANK_MARGINAL, i, device, session);
+    gst_qsv_jpeg_dec_register (plugin, GST_RANK_SECONDARY, i, device, session);
+    gst_qsv_vp9_dec_register (plugin, GST_RANK_MARGINAL, i, device, session);
+
+    gst_qsv_h264_enc_register (plugin, enc_rank, i, device, session);
+    gst_qsv_h265_enc_register (plugin, enc_rank, i, device, session);
+    gst_qsv_jpeg_enc_register (plugin, enc_rank, i, device, session);
+    gst_qsv_vp9_enc_register (plugin, enc_rank, i, device, session);
+    gst_qsv_av1_enc_register (plugin, enc_rank, i, device, session);
 
   next:
     MFXDispReleaseImplDescription (loader, desc);

@@ -91,9 +91,12 @@ translate_timestamp_from_internal_to_src (GstSmartEncoder * self,
 static GstFlowReturn
 gst_smart_encoder_finish_buffer (GstSmartEncoder * self, GstBuffer * buf)
 {
+  if (!GST_CLOCK_TIME_IS_VALID (GST_BUFFER_DTS (buf)))
+    GST_BUFFER_DTS (buf) = GST_BUFFER_PTS (buf);
+
   translate_timestamp_from_internal_to_src (self, &GST_BUFFER_PTS (buf));
   translate_timestamp_from_internal_to_src (self, &GST_BUFFER_DTS (buf));
-  GST_BUFFER_DTS (buf) = GST_BUFFER_DTS (buf);
+
   if (self->last_dts > GST_BUFFER_DTS (buf)) {
     /* Hack to always produces dts increasing DTS-s that are close to what the
      * encoder produced. */
@@ -790,7 +793,7 @@ gst_smart_encoder_add_parser (GstSmartEncoder * self, GstCaps * format)
     }
 
     stream_format = gst_structure_get_string (structure, "stream-format");
-    if (g_strcmp0 (stream_format, "avc1"))
+    if (g_strcmp0 (stream_format, "avc"))
       g_object_set (parser, "config-interval", -1, NULL);
 
   } else if (gst_structure_has_name (gst_caps_get_structure (format, 0),

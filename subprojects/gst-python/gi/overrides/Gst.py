@@ -48,6 +48,16 @@ python module to use with Gst 0.10"
     warnings.warn(warn_msg, RuntimeWarning)
 
 
+# Ensuring that PyGObject loads the URIHandler interface
+# so we can force our own implementation soon enough (in gstmodule.c)
+class URIHandler(Gst.URIHandler):
+    pass
+
+
+URIHandler = override(URIHandler)
+__all__.append('URIHandler')
+
+
 class Element(Gst.Element):
     @staticmethod
     def link_many(*args):
@@ -58,6 +68,7 @@ class Element(Gst.Element):
             if not pair[0].link(pair[1]):
                 raise LinkError(
                     'Failed to link {} and {}'.format(pair[0], pair[1]))
+
 
 Element = override(Element)
 __all__.append('Element')
@@ -86,6 +97,7 @@ class Bin(Gst.Bin):
 
 Bin = override(Bin)
 __all__.append('Bin')
+
 
 class Caps(Gst.Caps):
 
@@ -127,8 +139,10 @@ class Caps(Gst.Caps):
     def __len__(self):
         return self.get_size()
 
+
 Caps = override(Caps)
 __all__.append('Caps')
+
 
 class PadFunc:
     def __init__(self, func):
@@ -150,6 +164,7 @@ class PadFunc:
                                 % func)
 
         return res
+
 
 class Pad(Gst.Pad):
     def __init__(self, *args, **kwargs):
@@ -189,8 +204,10 @@ class Pad(Gst.Pad):
             raise LinkError(ret)
         return ret
 
+
 Pad = override(Pad)
 __all__.append('Pad')
+
 
 class GhostPad(Gst.GhostPad):
     def __init__(self, name, target=None, direction=None):
@@ -208,23 +225,36 @@ class GhostPad(Gst.GhostPad):
     def query_caps(self, filter=None):
         return Gst.GhostPad.query_caps(self, filter)
 
+
 GhostPad = override(GhostPad)
 __all__.append('GhostPad')
 
+
 class IteratorError(Exception):
     pass
+
+
 __all__.append('IteratorError')
+
 
 class AddError(Exception):
     pass
+
+
 __all__.append('AddError')
+
 
 class LinkError(Exception):
     pass
+
+
 __all__.append('LinkError')
+
 
 class MapError(Exception):
     pass
+
+
 __all__.append('MapError')
 
 
@@ -239,6 +269,7 @@ class Iterator(Gst.Iterator):
                 raise IteratorError(result)
 
             yield value
+
 
 Iterator = override(Iterator)
 __all__.append('Iterator')
@@ -260,12 +291,15 @@ class ElementFactory(Gst.ElementFactory):
     def make(cls, factory_name, instance_name=None):
         return Gst.ElementFactory.make(factory_name, instance_name)
 
+
 class Pipeline(Gst.Pipeline):
     def __init__(self, name=None):
         Gst.Pipeline.__init__(self, name=name)
 
+
 Pipeline = override(Pipeline)
 __all__.append('Pipeline')
+
 
 class Structure(Gst.Structure):
     def __new__(cls, *args, **kwargs):
@@ -297,6 +331,7 @@ class Structure(Gst.Structure):
 
     def keys(self):
         keys = set()
+
         def foreach(fid, value, unused1, udata):
             keys.add(GLib.quark_to_string(fid))
             return True
@@ -310,11 +345,13 @@ class Structure(Gst.Structure):
     def __str__(self):
         return self.to_string()
 
+
 Structure = override(Structure)
 __all__.append('Structure')
 
 ElementFactory = override(ElementFactory)
 __all__.append('ElementFactory')
+
 
 class Fraction(Gst.Fraction):
     def __init__(self, num, denom=1):
@@ -369,7 +406,7 @@ class Fraction(Gst.Fraction):
         elif isinstance(other, int):
             return Fraction(self.num * other, self.denom)
         raise TypeError("%s is not supported, use Gst.Fraction or int." %
-                (type(other)))
+                        (type(other)))
 
     __rmul__ = __mul__
 
@@ -380,7 +417,7 @@ class Fraction(Gst.Fraction):
         elif isinstance(other, int):
             return Fraction(self.num, self.denom * other)
         return TypeError("%s is not supported, use Gst.Fraction or int." %
-                (type(other)))
+                         (type(other)))
 
     __div__ = __truediv__
 
@@ -396,6 +433,7 @@ class Fraction(Gst.Fraction):
 
     def __str__(self):
         return '%d/%d' % (self.num, self.denom)
+
 
 Fraction = override(Fraction)
 __all__.append('Fraction')
@@ -419,14 +457,14 @@ class IntRange(Gst.IntRange):
 
     def __repr__(self):
         return '<Gst.IntRange [%d,%d,%d]>' % (self.range.start,
-                self.range.stop, self.range.step)
+                                              self.range.stop, self.range.step)
 
     def __str__(self):
         if self.range.step == 1:
             return '[%d,%d]' % (self.range.start, self.range.stop)
         else:
             return '[%d,%d,%d]' % (self.range.start, self.range.stop,
-                    self.range.step)
+                                   self.range.step)
 
     def __eq__(self, other):
         if isinstance(other, range):
@@ -434,6 +472,7 @@ class IntRange(Gst.IntRange):
         elif isinstance(other, IntRange):
             return self.range == other.range
         return False
+
 
 if sys.version_info >= (3, 0):
     IntRange = override(IntRange)
@@ -458,14 +497,14 @@ class Int64Range(Gst.Int64Range):
 
     def __repr__(self):
         return '<Gst.Int64Range [%d,%d,%d]>' % (self.range.start,
-                self.range.stop, self.range.step)
+                                                self.range.stop, self.range.step)
 
     def __str__(self):
         if self.range.step == 1:
             return '(int64)[%d,%d]' % (self.range.start, self.range.stop)
         else:
             return '(int64)[%d,%d,%d]' % (self.range.start, self.range.stop,
-                    self.range.step)
+                                          self.range.step)
 
     def __eq__(self, other):
         if isinstance(other, range):
@@ -473,6 +512,7 @@ class Int64Range(Gst.Int64Range):
         elif isinstance(other, IntRange):
             return self.range == other.range
         return False
+
 
 class Bitmask(Gst.Bitmask):
     def __init__(self, v):
@@ -532,10 +572,11 @@ class FractionRange(Gst.FractionRange):
 
     def __repr__(self):
         return '<Gst.FractionRange [%s,%s]>' % (str(self.start),
-                str(self.stop))
+                                                str(self.stop))
 
     def __str__(self):
         return '(fraction)[%s,%s]' % (str(self.start), str(self.stop))
+
 
 FractionRange = override(FractionRange)
 __all__.append('FractionRange')
@@ -555,10 +596,11 @@ class ValueArray(Gst.ValueArray):
         return len(self.array)
 
     def __str__(self):
-        return '<' + ','.join(map(str,self.array)) + '>'
+        return '<' + ','.join(map(str, self.array)) + '>'
 
     def __repr__(self):
         return '<Gst.ValueArray %s>' % (str(self))
+
 
 ValueArray = override(ValueArray)
 __all__.append('ValueArray')
@@ -578,10 +620,11 @@ class ValueList(Gst.ValueList):
         return len(self.array)
 
     def __str__(self):
-        return '{' + ','.join(map(str,self.array)) + '}'
+        return '{' + ','.join(map(str, self.array)) + '}'
 
     def __repr__(self):
         return '<Gst.ValueList %s>' % (str(self))
+
 
 ValueList = override(ValueList)
 __all__.append('ValueList')
@@ -593,6 +636,7 @@ def pairwise(iterable):
     a, b = itertools.tee(iterable)
     next(b, None)
     return zip(a, b)
+
 
 class MapInfo:
     def __init__(self):
@@ -620,7 +664,9 @@ class MapInfo:
         if not self.__parent__.unmap(self):
             raise MapError('MappingError', 'Unmapping was not successful')
 
+
 __all__.append("MapInfo")
+
 
 class Buffer(Gst.Buffer):
 
@@ -642,8 +688,10 @@ class Buffer(Gst.Buffer):
         mapinfo.__parent__ = None
         return _gi_gst.buffer_override_unmap(self, mapinfo)
 
+
 Buffer = override(Buffer)
 __all__.append('Buffer')
+
 
 class Memory(Gst.Memory):
 
@@ -658,8 +706,10 @@ class Memory(Gst.Memory):
         mapinfo.__parent__ = None
         return _gi_gst.memory_override_unmap(self, mapinfo)
 
+
 Memory = override(Memory)
 __all__.append('Memory')
+
 
 def TIME_ARGS(time):
     if time == Gst.CLOCK_TIME_NONE:
@@ -669,6 +719,8 @@ def TIME_ARGS(time):
                                   (time / (Gst.SECOND * 60)) % 60,
                                   (time / Gst.SECOND) % 60,
                                   time % Gst.SECOND)
+
+
 __all__.append('TIME_ARGS')
 
 from gi.overrides import _gi_gst
@@ -686,9 +738,14 @@ Gst.fixme = _gi_gst.fixme
 Gst.memdump = _gi_gst.memdump
 
 # Make sure PyGst is not usable if GStreamer has not been initialized
+
+
 class NotInitialized(Exception):
     pass
+
+
 __all__.append('NotInitialized')
+
 
 def fake_method(*args):
     raise NotInitialized("Please call Gst.init(argv) before using GStreamer")
@@ -703,6 +760,24 @@ for cname_klass in [o for o in inspect.getmembers(Gst) if isinstance(o[1], type(
                           for o in cname_klass[1].__dict__
                           if isinstance(cname_klass[1].__dict__[o], type(Gst.init))]))
 
+pre_init_functions = set([
+    "init",
+    "init_check",
+    "deinit",
+    "is_initialized",
+    "debug_add_log_function",
+    "debug_add_ring_buffer_logger",
+    "debug_remove_log_function",
+    "debug_remove_log_function_by_data",
+    "debug_remove_ring_buffer_logger",
+    "debug_set_active",
+    "debug_set_color_mode",
+    "debug_set_color_mode_from_string",
+    "debug_set_colored",
+    "debug_set_default_threshold",
+])
+
+
 def init_pygst():
     for fname, function in real_functions:
         if fname not in ["init", "init_check", "deinit"]:
@@ -715,30 +790,55 @@ def init_pygst():
 
 def deinit_pygst():
     for fname, func in real_functions:
-        if fname not in ["init", "init_check", "deinit", "is_initialized"]:
+        if fname not in pre_init_functions:
             setattr(Gst, fname, fake_method)
     for cname_class, methods in class_methods:
         for mname, method in methods:
             setattr(cname_class[1], mname, fake_method)
 
+
 real_init = Gst.init
 def init(argv):
     init_pygst()
+
+    if Gst.is_initialized():
+        return True
+
     return real_init(argv)
+
+
 Gst.init = init
 
 real_init_check = Gst.init_check
+
+
 def init_check(argv):
     init_pygst()
+    if Gst.is_initialized():
+        return True
+
     return real_init_check(argv)
+
+
 Gst.init_check = init_check
 
 real_deinit = Gst.deinit
+
+
 def deinit():
     deinit_pygst()
     return real_deinit()
 
+
+def init_python():
+    if not Gst.is_initialized():
+        raise NotInitialized("Gst.init_python should never be called before GStreamer itself is initialized")
+
+    init_pygst()
+
+
 Gst.deinit = deinit
+Gst.init_python = init_python
 
 if not Gst.is_initialized():
     deinit_pygst()

@@ -23,7 +23,7 @@
 #include "gstnvenc.h"
 
 #include <gst/video/gstvideoencoder.h>
-#include "gstcudacontext.h"
+#include <gst/cuda/gstcudacontext.h>
 
 #define GST_TYPE_NV_BASE_ENC \
   (gst_nv_base_enc_get_type())
@@ -76,7 +76,6 @@ typedef struct {
   gboolean lookahead;
   gboolean temporal_aq;
   gint bframes;
-  gint emphasis_map_support;
 } GstNvEncDeviceCaps;
 
 typedef struct {
@@ -164,9 +163,6 @@ typedef struct {
   gboolean        temporal_aq;
   guint           bframes;
   gboolean        b_adapt;
-  guint           qp_map_mode;
-  guint*          qp_map;
-  guint           qp_map_size;
 } GstNvBaseEnc;
 
 typedef struct {

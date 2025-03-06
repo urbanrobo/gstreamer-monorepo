@@ -111,6 +111,7 @@ struct _GstAV1Parse
   GstAV1Profile profile;
 
   GstAV1ParseAligment in_align;
+  gboolean detect_annex_b;
   GstAV1ParseAligment align;
 
   GstAV1Parser *parser;
@@ -118,11 +119,18 @@ struct _GstAV1Parse
   guint last_parsed_offset;
   GstAdapter *frame_cache;
   guint highest_spatial_id;
+  gint last_shown_frame_temporal_id;
+  gint last_shown_frame_spatial_id;
+  gboolean within_one_frame;
   gboolean update_caps;
   gboolean discont;
   gboolean header;
   gboolean keyframe;
   gboolean show_frame;
+
+  GstClockTime buffer_pts;
+  GstClockTime buffer_dts;
+  GstClockTime buffer_duration;
 };
 
 static GstStaticPadTemplate sinktemplate = GST_STATIC_PAD_TEMPLATE ("sink",
@@ -269,6 +277,25 @@ static gboolean gst_av1_parse_set_sink_caps (GstBaseParse * parse,
     GstCaps * caps);
 static GstCaps *gst_av1_parse_get_sink_caps (GstBaseParse * parse,
     GstCaps * filter);
+static GstFlowReturn gst_av1_parse_pre_push_frame (GstBaseParse * parse,
+    GstBaseParseFrame * frame);
+
+/* Clear the parse state related to data kind OBUs. */
+static void
+gst_av1_parse_reset_obu_data_state (GstAV1Parse * self)
+{
+  self->last_shown_frame_temporal_id = -1;
+  self->last_shown_frame_spatial_id = -1;
+  self->within_one_frame = FALSE;
+}
+
+static void
+gst_av1_parse_reset_tu_timestamp (GstAV1Parse * self)
+{
+  self->buffer_pts = GST_CLOCK_TIME_NONE;
+  self->buffer_dts = GST_CLOCK_TIME_NONE;
+  self->buffer_duration = GST_CLOCK_TIME_NONE;
+}
 
 static void
 gst_av1_parse_reset (GstAV1Parse * self)
@@ -282,16 +309,19 @@ gst_av1_parse_reset (GstAV1Parse * self)
   self->bit_depth = 0;
   self->align = GST_AV1_PARSE_ALIGN_NONE;
   self->in_align = GST_AV1_PARSE_ALIGN_NONE;
+  self->detect_annex_b = FALSE;
   self->discont = TRUE;
   self->header = FALSE;
   self->keyframe = FALSE;
   self->show_frame = FALSE;
   self->last_parsed_offset = 0;
   self->highest_spatial_id = 0;
+  gst_av1_parse_reset_obu_data_state (self);
   g_clear_pointer (&self->colorimetry, g_free);
   g_clear_pointer (&self->parser, gst_av1_parser_free);
   gst_adapter_clear (self->cache_out);
   gst_adapter_clear (self->frame_cache);
+  gst_av1_parse_reset_tu_timestamp (self);
 }
 
 static void
@@ -330,6 +360,8 @@ gst_av1_parse_class_init (GstAV1ParseClass * klass)
   parse_class->start = GST_DEBUG_FUNCPTR (gst_av1_parse_start);
   parse_class->stop = GST_DEBUG_FUNCPTR (gst_av1_parse_stop);
   parse_class->handle_frame = GST_DEBUG_FUNCPTR (gst_av1_parse_handle_frame);
+  parse_class->pre_push_frame =
+      GST_DEBUG_FUNCPTR (gst_av1_parse_pre_push_frame);
   parse_class->set_sink_caps = GST_DEBUG_FUNCPTR (gst_av1_parse_set_sink_caps);
   parse_class->get_sink_caps = GST_DEBUG_FUNCPTR (gst_av1_parse_get_sink_caps);
 
@@ -595,8 +627,7 @@ gst_av1_parse_alignment_from_caps (GstCaps * caps)
     str_align = gst_structure_get_string (s, "alignment");
     str_stream = gst_structure_get_string (s, "stream-format");
 
-    if (str_align || str_stream)
-      align = gst_av1_parse_alignment_from_string (str_align, str_stream);
+    align = gst_av1_parse_alignment_from_string (str_align, str_stream);
   }
 
   return align;
@@ -725,7 +756,7 @@ static void
 gst_av1_parse_negotiate (GstAV1Parse * self, GstCaps * in_caps)
 {
   GstCaps *caps;
-  GstAV1ParseAligment align = GST_AV1_PARSE_ALIGN_NONE;
+  GstAV1ParseAligment align;
 
   caps = gst_pad_get_allowed_caps (GST_BASE_PARSE_SRC_PAD (self));
   GST_DEBUG_OBJECT (self, "allowed caps: %" GST_PTR_FORMAT, caps);
@@ -740,38 +771,45 @@ gst_av1_parse_negotiate (GstAV1Parse * self, GstCaps * in_caps)
   /* prefer TU as default */
   if (gst_av1_parse_caps_has_alignment (caps,
           GST_AV1_PARSE_ALIGN_TEMPORAL_UNIT)) {
-    align = GST_AV1_PARSE_ALIGN_TEMPORAL_UNIT;
+    self->align = GST_AV1_PARSE_ALIGN_TEMPORAL_UNIT;
     goto done;
   }
 
   /* Both upsteam and downstream support, best */
   if (in_caps && caps) {
     if (gst_caps_can_intersect (in_caps, caps)) {
-      GST_DEBUG_OBJECT (self, "downstream accepts upstream caps");
-      align = gst_av1_parse_alignment_from_caps (in_caps);
-      gst_clear_caps (&caps);
+      GstCaps *common_caps = NULL;
+
+      common_caps = gst_caps_intersect (in_caps, caps);
+      align = gst_av1_parse_alignment_from_caps (common_caps);
+      gst_clear_caps (&common_caps);
+
+      if (align != GST_AV1_PARSE_ALIGN_NONE
+          && align != GST_AV1_PARSE_ALIGN_ERROR) {
+        self->align = align;
+        goto done;
+      }
     }
   }
-  if (align != GST_AV1_PARSE_ALIGN_NONE)
-    goto done;
 
   /* Select first one of downstream support */
   if (caps && !gst_caps_is_empty (caps)) {
     /* fixate to avoid ambiguity with lists when parsing */
     caps = gst_caps_fixate (caps);
     align = gst_av1_parse_alignment_from_caps (caps);
+
+    if (align != GST_AV1_PARSE_ALIGN_NONE && align != GST_AV1_PARSE_ALIGN_ERROR) {
+      self->align = align;
+      goto done;
+    }
   }
-  if (align != GST_AV1_PARSE_ALIGN_NONE)
-    goto done;
 
   /* default */
-  if (align == GST_AV1_PARSE_ALIGN_NONE)
-    align = GST_AV1_PARSE_ALIGN_TEMPORAL_UNIT;
+  self->align = GST_AV1_PARSE_ALIGN_TEMPORAL_UNIT;
 
 done:
-  self->align = align;
   GST_INFO_OBJECT (self, "selected alignment %s",
-      gst_av1_parse_alignment_to_string (align));
+      gst_av1_parse_alignment_to_string (self->align));
 
   gst_clear_caps (&caps);
 }
@@ -850,9 +888,12 @@ gst_av1_parse_set_sink_caps (GstBaseParse * parse, GstCaps * caps)
 
   in_caps = gst_caps_copy (caps);
   /* default */
-  if (align == GST_AV1_PARSE_ALIGN_NONE)
+  if (align == GST_AV1_PARSE_ALIGN_NONE) {
+    align = GST_AV1_PARSE_ALIGN_BYTE;
     gst_caps_set_simple (in_caps, "alignment", G_TYPE_STRING,
-        gst_av1_parse_alignment_to_string (GST_AV1_PARSE_ALIGN_BYTE), NULL);
+        gst_av1_parse_alignment_to_string (align),
+        "stream-format", G_TYPE_STRING, "obu-stream", NULL);
+  }
 
   /* negotiate with downstream, set output align */
   gst_av1_parse_negotiate (self, in_caps);
@@ -867,6 +908,9 @@ gst_av1_parse_set_sink_caps (GstBaseParse * parse, GstCaps * caps)
   gst_caps_unref (in_caps);
 
   self->in_align = align;
+
+  if (self->in_align == GST_AV1_PARSE_ALIGN_TEMPORAL_UNIT)
+    self->detect_annex_b = TRUE;
 
   if (self->in_align == GST_AV1_PARSE_ALIGN_TEMPORAL_UNIT_ANNEX_B) {
     gst_av1_parser_reset (self->parser, TRUE);
@@ -934,20 +978,29 @@ gst_av1_parse_push_data (GstAV1Parse * self, GstBaseParseFrame * frame,
     if (self->discont) {
       GST_BUFFER_FLAG_SET (buf, GST_BUFFER_FLAG_DISCONT);
       self->discont = FALSE;
+    } else {
+      GST_BUFFER_FLAG_UNSET (buf, GST_BUFFER_FLAG_DISCONT);
     }
+
     if (self->header) {
       GST_BUFFER_FLAG_SET (buf, GST_BUFFER_FLAG_HEADER);
       self->header = FALSE;
-    }
-    if (self->keyframe) {
-      GST_BUFFER_FLAG_UNSET (buffer, GST_BUFFER_FLAG_DELTA_UNIT);
-      self->keyframe = FALSE;
     } else {
-      GST_BUFFER_FLAG_SET (buffer, GST_BUFFER_FLAG_DELTA_UNIT);
+      GST_BUFFER_FLAG_UNSET (buf, GST_BUFFER_FLAG_HEADER);
     }
 
-    if (frame_finished)
-      GST_BUFFER_FLAG_SET (buffer, GST_BUFFER_FLAG_MARKER);
+    if (self->keyframe) {
+      GST_BUFFER_FLAG_UNSET (buf, GST_BUFFER_FLAG_DELTA_UNIT);
+      self->keyframe = FALSE;
+    } else {
+      GST_BUFFER_FLAG_SET (buf, GST_BUFFER_FLAG_DELTA_UNIT);
+    }
+
+    if (frame_finished) {
+      GST_BUFFER_FLAG_SET (buf, GST_BUFFER_FLAG_MARKER);
+    } else {
+      GST_BUFFER_FLAG_UNSET (buf, GST_BUFFER_FLAG_MARKER);
+    }
 
     if (self->align == GST_AV1_PARSE_ALIGN_FRAME) {
       if (!self->show_frame) {
@@ -955,6 +1008,8 @@ gst_av1_parse_push_data (GstAV1Parse * self, GstBaseParseFrame * frame,
       } else {
         GST_BUFFER_FLAG_UNSET (buf, GST_BUFFER_FLAG_DECODE_ONLY);
       }
+    } else {
+      GST_BUFFER_FLAG_UNSET (buf, GST_BUFFER_FLAG_DECODE_ONLY);
     }
 
     gst_buffer_replace (&frame->out_buffer, buf);
@@ -1164,29 +1219,30 @@ gst_av1_parse_handle_sequence_obu (GstAV1Parse * self, GstAV1OBU * obu)
 
   if (seq_header.color_config.color_description_present_flag) {
     GstVideoColorimetry cinfo;
-    gboolean have_cinfo = TRUE;
     gchar *colorimetry = NULL;
 
-    if (have_cinfo) {
-      if (seq_header.color_config.color_range)
-        cinfo.range = GST_VIDEO_COLOR_RANGE_16_235;
-      else
-        cinfo.range = GST_VIDEO_COLOR_RANGE_0_255;
+    if (seq_header.color_config.color_range)
+      cinfo.range = GST_VIDEO_COLOR_RANGE_0_255;
+    else
+      cinfo.range = GST_VIDEO_COLOR_RANGE_16_235;
 
-      cinfo.matrix = gst_video_color_matrix_from_iso
-          (seq_header.color_config.matrix_coefficients);
-      cinfo.transfer = gst_video_transfer_function_from_iso
-          (seq_header.color_config.transfer_characteristics);
-      cinfo.primaries = gst_video_color_primaries_from_iso
-          (seq_header.color_config.color_primaries);
-      colorimetry = gst_video_colorimetry_to_string (&cinfo);
-    }
+    cinfo.matrix = gst_video_color_matrix_from_iso
+        (seq_header.color_config.matrix_coefficients);
+    cinfo.transfer = gst_video_transfer_function_from_iso
+        (seq_header.color_config.transfer_characteristics);
+    cinfo.primaries = gst_video_color_primaries_from_iso
+        (seq_header.color_config.color_primaries);
 
-    if (g_strcmp0 (colorimetry, self->colorimetry)) {
-      g_clear_pointer (&self->colorimetry, g_free);
+    colorimetry = gst_video_colorimetry_to_string (&cinfo);
+
+    if (g_strcmp0 (colorimetry, self->colorimetry) != 0) {
+      g_free (self->colorimetry);
       self->colorimetry = colorimetry;
+      colorimetry = NULL;
       self->update_caps = TRUE;
     }
+
+    g_clear_pointer (&colorimetry, g_free);
   }
 
   if (self->subsampling_x != seq_header.color_config.subsampling_x) {
@@ -1215,7 +1271,7 @@ gst_av1_parse_handle_sequence_obu (GstAV1Parse * self, GstAV1OBU * obu)
   }
 
   val = (self->parser->state.operating_point_idc >> 8) & 0x0f;
-  for (i = 0; i < (1 << GST_AV1_MAX_SPATIAL_LAYERS); i++) {
+  for (i = 0; i < GST_AV1_MAX_NUM_SPATIAL_LAYERS; i++) {
     if (val & (1 << i))
       self->highest_spatial_id = i;
   }
@@ -1223,9 +1279,58 @@ gst_av1_parse_handle_sequence_obu (GstAV1Parse * self, GstAV1OBU * obu)
   return GST_AV1_PARSER_OK;
 }
 
+/* Check whether the frame start a new TU.
+   The obu here should be a shown frame/frame header. */
+static gboolean
+gst_av1_parse_frame_start_new_temporal_unit (GstAV1Parse * self,
+    GstAV1OBU * obu)
+{
+  gboolean ret = FALSE;
+
+  g_assert (obu->obu_type == GST_AV1_OBU_FRAME_HEADER
+      || obu->obu_type == GST_AV1_OBU_FRAME);
+
+  /* 7.5.Ordering of OBUs: The value of temporal_id must be the same in all
+     OBU extension headers that are contained in the same temporal unit. */
+  if (self->last_shown_frame_temporal_id >= 0 &&
+      obu->header.obu_temporal_id != self->last_shown_frame_temporal_id) {
+    ret = TRUE;
+    goto new_tu;
+  }
+
+  /* If scalability is not being used, only one shown frame for each
+     temporal unit. So the new frame belongs to a new temporal unit. */
+  if (!self->within_one_frame && self->last_shown_frame_temporal_id >= 0 &&
+      self->parser->state.operating_point_idc == 0) {
+    ret = TRUE;
+    goto new_tu;
+  }
+
+  /* The new frame has the same layer IDs with the last shown frame,
+     it should belong to a new temporal unit. */
+  if (!self->within_one_frame &&
+      obu->header.obu_temporal_id == self->last_shown_frame_temporal_id &&
+      obu->header.obu_spatial_id == self->last_shown_frame_spatial_id) {
+    ret = TRUE;
+    goto new_tu;
+  }
+
+new_tu:
+  if (ret) {
+    if (self->within_one_frame)
+      GST_WARNING_OBJECT (self,
+          "Start a new temporal unit with incompleted frame.");
+
+    gst_av1_parse_reset_obu_data_state (self);
+  }
+
+  return ret;
+}
+
+/* frame_complete will be set true if it is the frame edge. */
 static GstAV1ParserResult
 gst_av1_parse_handle_one_obu (GstAV1Parse * self, GstAV1OBU * obu,
-    gboolean * frame_complete)
+    gboolean * frame_complete, gboolean * check_new_tu)
 {
   GstAV1ParserResult res = GST_AV1_PARSER_OK;
   GstAV1MetadataOBU metadata;
@@ -1293,6 +1398,21 @@ gst_av1_parse_handle_one_obu (GstAV1Parse * self, GstAV1OBU * obu,
     goto out;
   }
 
+  /* If to check a new temporal starts, return early.
+     In 7.5.Ordering of OBUs: Sequence header OBUs may appear in any order
+     within a coded video sequence. So it is allowed to repeat the sequence
+     header within one temporal unit, and sequence header does not definitely
+     start a TU. We only check TD here. */
+  if (obu->obu_type == GST_AV1_OBU_TEMPORAL_DELIMITER) {
+    gst_av1_parse_reset_obu_data_state (self);
+
+    if (check_new_tu) {
+      *check_new_tu = TRUE;
+      res = GST_AV1_PARSER_OK;
+      goto out;
+    }
+  }
+
   if (obu->obu_type == GST_AV1_OBU_SEQUENCE_HEADER)
     self->header = TRUE;
 
@@ -1304,6 +1424,22 @@ gst_av1_parse_handle_one_obu (GstAV1Parse * self, GstAV1OBU * obu,
     if (obu->obu_type == GST_AV1_OBU_FRAME)
       fh = &frame.frame_header;
 
+    self->show_frame = fh->show_frame || fh->show_existing_frame;
+    if (self->show_frame) {
+      /* Check whether a new temporal starts, and return early. */
+      if (check_new_tu && obu->obu_type != GST_AV1_OBU_REDUNDANT_FRAME_HEADER
+          && gst_av1_parse_frame_start_new_temporal_unit (self, obu)) {
+        *check_new_tu = TRUE;
+        res = GST_AV1_PARSER_OK;
+        goto out;
+      }
+
+      self->last_shown_frame_temporal_id = obu->header.obu_temporal_id;
+      self->last_shown_frame_spatial_id = obu->header.obu_spatial_id;
+    }
+
+    self->within_one_frame = TRUE;
+
     /* if a show_existing_frame case, only update key frame.
        otherwise, update all type of frame.  */
     if (!fh->show_existing_frame || fh->frame_type == GST_AV1_KEY_FRAME)
@@ -1312,10 +1448,10 @@ gst_av1_parse_handle_one_obu (GstAV1Parse * self, GstAV1OBU * obu,
     if (res != GST_AV1_PARSER_OK)
       GST_WARNING_OBJECT (self, "update frame get result %d", res);
 
-    self->show_frame = fh->show_frame || fh->show_existing_frame;
-
-    if (fh->show_existing_frame)
+    if (fh->show_existing_frame) {
       *frame_complete = TRUE;
+      self->within_one_frame = FALSE;
+    }
 
     if (fh->frame_type == GST_AV1_KEY_FRAME)
       self->keyframe = TRUE;
@@ -1325,11 +1461,15 @@ gst_av1_parse_handle_one_obu (GstAV1Parse * self, GstAV1OBU * obu,
       || obu->obu_type == GST_AV1_OBU_FRAME) {
     GstAV1TileGroupOBU *tg = &tile_group;
 
+    self->within_one_frame = TRUE;
+
     if (obu->obu_type == GST_AV1_OBU_FRAME)
       tg = &frame.tile_group;
 
-    if (tg->tg_end == tg->num_tiles - 1)
+    if (tg->tg_end == tg->num_tiles - 1) {
       *frame_complete = TRUE;
+      self->within_one_frame = FALSE;
+    }
   }
 
 out:
@@ -1338,6 +1478,7 @@ out:
     if (obu->obu_type == GST_AV1_OBU_REDUNDANT_FRAME_HEADER) {
       GST_WARNING_OBJECT (self, "Ignore a verbose %s OBU parsing error",
           _obu_name (obu->obu_type));
+      gst_av1_parse_reset_obu_data_state (self);
       res = GST_AV1_PARSER_OK;
     }
   }
@@ -1369,17 +1510,19 @@ gst_av1_parse_handle_obu_to_obu (GstBaseParse * parse,
   res = gst_av1_parser_identify_one_obu (self->parser, map_info.data,
       map_info.size, &obu, &consumed);
   if (res == GST_AV1_PARSER_OK)
-    res = gst_av1_parse_handle_one_obu (self, &obu, &frame_complete);
+    res = gst_av1_parse_handle_one_obu (self, &obu, &frame_complete, NULL);
 
   g_assert (consumed <= map_info.size);
 
-  if (res == GST_AV1_PARSER_BITSTREAM_ERROR) {
+  if (res == GST_AV1_PARSER_BITSTREAM_ERROR ||
+      res == GST_AV1_PARSER_MISSING_OBU_REFERENCE) {
     if (consumed) {
       *skipsize = consumed;
     } else {
       *skipsize = map_info.size;
     }
     GST_WARNING_OBJECT (parse, "Parse obu error, discard %d.", *skipsize);
+    gst_av1_parse_reset_obu_data_state (self);
     ret = GST_FLOW_OK;
     goto out;
   } else if (res == GST_AV1_PARSER_NO_MORE_DATA) {
@@ -1394,12 +1537,14 @@ gst_av1_parse_handle_obu_to_obu (GstBaseParse * parse,
       }
       GST_WARNING_OBJECT (parse, "Parse obu need more data, discard %d.",
           *skipsize);
+      gst_av1_parse_reset_obu_data_state (self);
     }
     ret = GST_FLOW_OK;
     goto out;
   } else if (res == GST_AV1_PARSER_DROP) {
     GST_DEBUG_OBJECT (parse, "Drop %d data", consumed);
     *skipsize = consumed;
+    gst_av1_parse_reset_obu_data_state (self);
     ret = GST_FLOW_OK;
     goto out;
   } else if (res != GST_AV1_PARSER_OK) {
@@ -1434,6 +1579,19 @@ out:
   return ret;
 }
 
+static void
+gst_av1_parse_create_subframe (GstBaseParseFrame * frame,
+    GstBaseParseFrame * subframe, GstBuffer * buffer)
+{
+  gst_base_parse_frame_init (subframe);
+  subframe->flags |= frame->flags;
+  subframe->offset = frame->offset;
+  subframe->overhead = frame->overhead;
+  /* Just ref the input buffer. The base parse will check that
+     pointer, and it will be replaced by its out_buffer later. */
+  subframe->buffer = gst_buffer_ref (buffer);
+}
+
 static GstFlowReturn
 gst_av1_parse_handle_to_small_and_equal_align (GstBaseParse * parse,
     GstBaseParseFrame * frame, gint * skipsize)
@@ -1442,57 +1600,87 @@ gst_av1_parse_handle_to_small_and_equal_align (GstBaseParse * parse,
   GstMapInfo map_info;
   GstAV1OBU obu;
   GstFlowReturn ret = GST_FLOW_OK;
-  GstAV1ParserResult res;
+  GstAV1ParserResult res = GST_AV1_PARSER_INVALID_OPERATION;
   GstBuffer *buffer = gst_buffer_ref (frame->buffer);
-  guint32 total_consumed, consumed;
+  guint32 offset, consumed_before_push, consumed;
   gboolean frame_complete;
+  GstBaseParseFrame subframe;
 
   if (!gst_buffer_map (buffer, &map_info, GST_MAP_READ)) {
     GST_ERROR_OBJECT (parse, "Couldn't map incoming buffer");
     return GST_FLOW_ERROR;
   }
 
-  total_consumed = 0;
+  self->buffer_pts = GST_BUFFER_PTS (buffer);
+  self->buffer_dts = GST_BUFFER_DTS (buffer);
+  self->buffer_duration = GST_BUFFER_DURATION (buffer);
+
+  consumed_before_push = 0;
+  offset = 0;
   frame_complete = FALSE;
 again:
-  while (total_consumed < map_info.size) {
+  while (offset < map_info.size) {
+    GST_BUFFER_OFFSET (buffer) = offset;
+
     res = gst_av1_parser_identify_one_obu (self->parser,
-        map_info.data + total_consumed, map_info.size - total_consumed,
-        &obu, &consumed);
+        map_info.data + offset, map_info.size - offset, &obu, &consumed);
     if (res == GST_AV1_PARSER_OK)
-      res = gst_av1_parse_handle_one_obu (self, &obu, &frame_complete);
+      res = gst_av1_parse_handle_one_obu (self, &obu, &frame_complete, NULL);
     if (res != GST_AV1_PARSER_OK)
       break;
 
-    if (obu.obu_type == GST_AV1_OBU_TEMPORAL_DELIMITER && total_consumed) {
+    if (obu.obu_type == GST_AV1_OBU_TEMPORAL_DELIMITER
+        && consumed_before_push > 0) {
       GST_DEBUG_OBJECT (self, "Encounter TD inside one %s aligned"
           " buffer, should not happen normally.",
           gst_av1_parse_alignment_to_string (self->in_align));
-      frame_complete = TRUE;
+
       if (self->in_align == GST_AV1_PARSE_ALIGN_TEMPORAL_UNIT_ANNEX_B)
         gst_av1_parser_reset_annex_b (self->parser);
-      /* Not include this TD obu, it should belong to the next TU or frame */
-      break;
+
+      /* Not include this TD obu, it should belong to the next TU or frame,
+         we push all the data we already got. */
+      gst_av1_parse_create_subframe (frame, &subframe, buffer);
+      ret = gst_av1_parse_push_data (self, &subframe,
+          consumed_before_push, TRUE);
+      if (ret != GST_FLOW_OK)
+        goto out;
+
+      /* Begin to find the next. */
+      frame_complete = FALSE;
+      consumed_before_push = 0;
+      continue;
     }
 
     gst_av1_parse_cache_one_obu (self, buffer, &obu,
-        map_info.data + total_consumed, consumed, frame_complete);
+        map_info.data + offset, consumed, frame_complete);
 
-    total_consumed += consumed;
+    offset += consumed;
+    consumed_before_push += consumed;
 
-    if (self->align == GST_AV1_PARSE_ALIGN_OBU)
-      break;
+    if ((self->align == GST_AV1_PARSE_ALIGN_OBU) ||
+        (self->align == GST_AV1_PARSE_ALIGN_FRAME && frame_complete)) {
+      gst_av1_parse_create_subframe (frame, &subframe, buffer);
+      ret = gst_av1_parse_push_data (self, &subframe,
+          consumed_before_push, frame_complete);
+      if (ret != GST_FLOW_OK)
+        goto out;
 
-    if (self->align == GST_AV1_PARSE_ALIGN_FRAME && frame_complete)
-      break;
+      /* Begin to find the next. */
+      frame_complete = FALSE;
+      consumed_before_push = 0;
+      continue;
+    }
   }
 
-  if (res == GST_AV1_PARSER_BITSTREAM_ERROR) {
+  if (res == GST_AV1_PARSER_BITSTREAM_ERROR ||
+      res == GST_AV1_PARSER_MISSING_OBU_REFERENCE) {
     /* Discard the whole frame */
     *skipsize = map_info.size;
     GST_WARNING_OBJECT (parse, "Parse obu error, discard %d", *skipsize);
     if (self->in_align == GST_AV1_PARSE_ALIGN_TEMPORAL_UNIT_ANNEX_B)
       gst_av1_parser_reset_annex_b (self->parser);
+    gst_av1_parse_reset_obu_data_state (self);
     ret = GST_FLOW_OK;
     goto out;
   } else if (res == GST_AV1_PARSER_NO_MORE_DATA) {
@@ -1502,11 +1690,14 @@ again:
         *skipsize);
     if (self->in_align == GST_AV1_PARSE_ALIGN_TEMPORAL_UNIT_ANNEX_B)
       gst_av1_parser_reset_annex_b (self->parser);
+
+    gst_av1_parse_reset_obu_data_state (self);
     ret = GST_FLOW_OK;
     goto out;
   } else if (res == GST_AV1_PARSER_DROP) {
     GST_DEBUG_OBJECT (parse, "Drop %d data", consumed);
-    total_consumed += consumed;
+    offset += consumed;
+    gst_av1_parse_reset_obu_data_state (self);
     res = GST_AV1_PARSER_OK;
     goto again;
   } else if (res != GST_AV1_PARSER_OK) {
@@ -1516,22 +1707,23 @@ again:
     goto out;
   }
 
-  g_assert (total_consumed >= map_info.size || frame_complete
-      || self->align == GST_AV1_PARSE_ALIGN_OBU);
-
-  if (total_consumed >= map_info.size && !frame_complete
+  /* If the total buffer exhausted but frame is not complete, we just
+     push the left data and consider it as a frame. */
+  if (consumed_before_push > 0 && !frame_complete
       && self->align == GST_AV1_PARSE_ALIGN_FRAME) {
-    /* Warning and still consider this frame as complete */
+    g_assert (offset >= map_info.size);
+    /* Warning and still consider the frame is complete */
     GST_WARNING_OBJECT (self, "Exhaust the buffer but still incomplete frame,"
         " should not happend in %s alignment",
         gst_av1_parse_alignment_to_string (self->in_align));
   }
 
-  ret = gst_av1_parse_push_data (self, frame, total_consumed, frame_complete);
+  ret = gst_av1_parse_push_data (self, frame, consumed_before_push, TRUE);
 
 out:
   gst_buffer_unmap (buffer, &map_info);
   gst_buffer_unref (buffer);
+  gst_av1_parse_reset_tu_timestamp (self);
   return ret;
 }
 
@@ -1547,6 +1739,7 @@ gst_av1_parse_handle_to_big_align (GstBaseParse * parse,
   GstBuffer *buffer = gst_buffer_ref (frame->buffer);
   guint32 consumed;
   gboolean frame_complete;
+  gboolean check_new_tu;
   gboolean complete;
 
   g_assert (self->in_align <= GST_AV1_PARSE_ALIGN_FRAME);
@@ -1563,14 +1756,21 @@ again:
     res = gst_av1_parser_identify_one_obu (self->parser,
         map_info.data + self->last_parsed_offset,
         map_info.size - self->last_parsed_offset, &obu, &consumed);
-    if (res == GST_AV1_PARSER_OK)
-      res = gst_av1_parse_handle_one_obu (self, &obu, &frame_complete);
     if (res != GST_AV1_PARSER_OK)
       break;
 
-    /* New TD come, always begin a new temporal unit or frame */
-    if (obu.obu_type == GST_AV1_OBU_TEMPORAL_DELIMITER
-        && (gst_adapter_available (self->cache_out) ||
+    check_new_tu = FALSE;
+    if (self->align == GST_AV1_PARSE_ALIGN_TEMPORAL_UNIT
+        || self->align == GST_AV1_PARSE_ALIGN_TEMPORAL_UNIT_ANNEX_B) {
+      res = gst_av1_parse_handle_one_obu (self, &obu, &frame_complete,
+          &check_new_tu);
+    } else {
+      res = gst_av1_parse_handle_one_obu (self, &obu, &frame_complete, NULL);
+    }
+    if (res != GST_AV1_PARSER_OK)
+      break;
+
+    if (check_new_tu && (gst_adapter_available (self->cache_out) ||
             gst_adapter_available (self->frame_cache))) {
       complete = TRUE;
       break;
@@ -1609,12 +1809,14 @@ again:
     goto out;
   }
 
-  if (res == GST_AV1_PARSER_BITSTREAM_ERROR) {
+  if (res == GST_AV1_PARSER_BITSTREAM_ERROR ||
+      res == GST_AV1_PARSER_MISSING_OBU_REFERENCE) {
     *skipsize = map_info.size;
     GST_WARNING_OBJECT (parse, "Parse obu error, discard whole buffer %d.",
         *skipsize);
     /* The adapter will be cleared in next loop because of
        GST_BASE_PARSE_FRAME_FLAG_NEW_FRAME flag */
+    gst_av1_parse_reset_obu_data_state (self);
     ret = GST_FLOW_OK;
   } else if (res == GST_AV1_PARSER_NO_MORE_DATA) {
     *skipsize = 0;
@@ -1624,6 +1826,7 @@ again:
          The adapter will be cleared in next loop because of
          GST_BASE_PARSE_FRAME_FLAG_NEW_FRAME flag */
       *skipsize = map_info.size;
+      gst_av1_parse_reset_obu_data_state (self);
       GST_WARNING_OBJECT (parse,
           "Parse obu need more data, discard whole buffer %d.", *skipsize);
     }
@@ -1631,6 +1834,7 @@ again:
   } else if (res == GST_AV1_PARSER_DROP) {
     GST_DEBUG_OBJECT (parse, "Drop %d data", consumed);
     self->last_parsed_offset += consumed;
+    gst_av1_parse_reset_obu_data_state (self);
     res = GST_AV1_PARSER_OK;
     goto again;
   } else if (res == GST_AV1_PARSER_OK) {
@@ -1651,48 +1855,55 @@ out:
   return ret;
 }
 
-/* Try to recognize whether the input is annex-b format. */
-static GstFlowReturn
-gst_av1_parse_detect_alignment (GstBaseParse * parse,
-    GstBaseParseFrame * frame, gint * skipsize)
+/* Try to recognize whether the input is annex-b format.
+   return TRUE if we decide, FALSE if we can not decide or
+   encounter some error. */
+static gboolean
+gst_av1_parse_detect_stream_format (GstBaseParse * parse,
+    GstBaseParseFrame * frame)
 {
   GstAV1Parse *self = GST_AV1_PARSE (parse);
   GstMapInfo map_info;
   GstAV1OBU obu;
-  GstAV1ParserResult res;
+  GstAV1ParserResult res = GST_AV1_PARSER_INVALID_OPERATION;
   GstBuffer *buffer = gst_buffer_ref (frame->buffer);
   gboolean got_seq, got_frame;
   gboolean frame_complete;
-  guint32 consumed, total_consumed;
-  guint32 frame_sz;
-  GstFlowReturn ret = GST_FLOW_OK;
+  guint32 consumed;
+  guint32 total_consumed;
+  guint32 tu_sz;
+  gboolean ret = FALSE;
+
+  g_assert (self->in_align == GST_AV1_PARSE_ALIGN_TEMPORAL_UNIT);
+  g_assert (self->detect_annex_b == TRUE);
 
   if (!gst_buffer_map (buffer, &map_info, GST_MAP_READ)) {
-    *skipsize = 0;
     GST_ERROR_OBJECT (parse, "Couldn't map incoming buffer");
-    return GST_FLOW_ERROR;
+    return FALSE;
   }
 
   gst_av1_parser_reset (self->parser, FALSE);
 
-  /* Detect the alignment obu first */
   got_seq = FALSE;
   got_frame = FALSE;
   total_consumed = 0;
+
 again:
   while (total_consumed < map_info.size) {
     res = gst_av1_parser_identify_one_obu (self->parser,
         map_info.data + total_consumed, map_info.size - total_consumed,
         &obu, &consumed);
-    if (res == GST_AV1_PARSER_OK)
-      res = gst_av1_parse_handle_one_obu (self, &obu, &frame_complete);
+    if (res == GST_AV1_PARSER_OK) {
+      total_consumed += consumed;
+      res = gst_av1_parse_handle_one_obu (self, &obu, &frame_complete, NULL);
+    }
+
     if (res != GST_AV1_PARSER_OK)
       break;
 
-    total_consumed += consumed;
-
     if (obu.obu_type == GST_AV1_OBU_SEQUENCE_HEADER)
       got_seq = TRUE;
+
     if (obu.obu_type == GST_AV1_OBU_REDUNDANT_FRAME_HEADER ||
         obu.obu_type == GST_AV1_OBU_FRAME ||
         obu.obu_type == GST_AV1_OBU_FRAME_HEADER)
@@ -1704,52 +1915,48 @@ again:
 
   gst_av1_parser_reset (self->parser, FALSE);
 
-  if (res == GST_AV1_PARSER_OK || res == GST_AV1_PARSER_NO_MORE_DATA) {
-    *skipsize = 0;
-
-    /* If succeed recognize seq or frame, we can decide,
-       otherwise, just skipsize to 0 and get more data. */
-    if (got_seq || got_frame)
-      self->in_align = GST_AV1_PARSE_ALIGN_BYTE;
-
-    ret = GST_FLOW_OK;
+  /* If succeed recognize seq or frame, it's done.
+     otherwise, just need to get more data. */
+  if (got_seq || got_frame) {
+    ret = TRUE;
+    self->detect_annex_b = FALSE;
     goto out;
-  } else if (res == GST_AV1_PARSER_DROP) {
+  }
+
+  if (res == GST_AV1_PARSER_DROP) {
     total_consumed += consumed;
     res = GST_AV1_PARSER_OK;
+    gst_av1_parse_reset_obu_data_state (self);
     goto again;
   }
 
-  /* Try the annexb. The buffer should hold the whole frame, and
-     the buffer start with the frame size in leb128() format. */
+  /* Try the annex b format. The buffer should contain the whole TU,
+     and the buffer start with the TU size in leb128() format. */
   if (map_info.size < 8) {
-    /* Get more data. */
-    *skipsize = 0;
-    ret = GST_FLOW_OK;
+    /* Too small. */
     goto out;
   }
 
-  frame_sz = _read_leb128 (map_info.data, &res, &consumed);
-  if (frame_sz == 0 || res != GST_AV1_PARSER_OK) {
-    /* Both modes does not match, we can decide a error */
-    ret = GST_FLOW_ERROR;
+  tu_sz = _read_leb128 (map_info.data, &res, &consumed);
+  if (tu_sz == 0 || res != GST_AV1_PARSER_OK) {
+    /* error to get the TU size, should not be annex b. */
     goto out;
   }
 
-  if (frame_sz + consumed != map_info.size) {
-    GST_DEBUG_OBJECT (self, "Buffer size %" G_GSSIZE_FORMAT ", frame size %d,"
-        " consumed %d, does not match annex b format.",
-        map_info.size, frame_sz, consumed);
-    /* Both modes does not match, we can decide a error */
-    ret = GST_FLOW_ERROR;
+  if (tu_sz + consumed != map_info.size) {
+    GST_DEBUG_OBJECT (self, "Buffer size %" G_GSSIZE_FORMAT ", TU size %d,"
+        " do not match.", map_info.size, tu_sz);
     goto out;
   }
 
+  GST_INFO_OBJECT (self, "Detect the annex-b format");
   self->in_align = GST_AV1_PARSE_ALIGN_TEMPORAL_UNIT_ANNEX_B;
+  self->detect_annex_b = FALSE;
   gst_av1_parser_reset (self->parser, TRUE);
-  ret = GST_FLOW_OK;
+  ret = TRUE;
 
 out:
+  gst_av1_parse_reset_obu_data_state (self);
   gst_buffer_unmap (buffer, &map_info);
   gst_buffer_unref (buffer);
   return ret;
@@ -1763,10 +1970,14 @@ gst_av1_parse_handle_frame (GstBaseParse * parse,
   GstFlowReturn ret = GST_FLOW_OK;
   guint in_level, out_level;
 
-  if (GST_BUFFER_FLAG_IS_SET (frame->buffer, GST_BUFFER_FLAG_DISCONT))
+  if (GST_BUFFER_FLAG_IS_SET (frame->buffer, GST_BUFFER_FLAG_DISCONT)) {
     self->discont = TRUE;
-  else
+
+    if (frame->flags & GST_BASE_PARSE_FRAME_FLAG_NEW_FRAME)
+      gst_av1_parse_reset_obu_data_state (self);
+  } else {
     self->discont = FALSE;
+  }
 
   GST_LOG_OBJECT (self, "Input frame size %" G_GSSIZE_FORMAT,
       gst_buffer_get_size (frame->buffer));
@@ -1794,10 +2005,22 @@ gst_av1_parse_handle_frame (GstBaseParse * parse,
     if (upstream_caps) {
       if (!gst_caps_is_empty (upstream_caps)
           && !gst_caps_is_any (upstream_caps)) {
+        GstAV1ParseAligment align;
+
         GST_LOG_OBJECT (self, "upstream caps: %" GST_PTR_FORMAT, upstream_caps);
+
         /* fixate to avoid ambiguity with lists when parsing */
         upstream_caps = gst_caps_fixate (upstream_caps);
-        self->in_align = gst_av1_parse_alignment_from_caps (upstream_caps);
+        align = gst_av1_parse_alignment_from_caps (upstream_caps);
+        if (align == GST_AV1_PARSE_ALIGN_ERROR) {
+          GST_ERROR_OBJECT (self, "upstream caps %" GST_PTR_FORMAT
+              " set stream-format and alignment conflict.", upstream_caps);
+
+          gst_caps_unref (upstream_caps);
+          return GST_FLOW_ERROR;
+        }
+
+        self->in_align = align;
       }
 
       gst_caps_unref (upstream_caps);
@@ -1806,23 +2029,31 @@ gst_av1_parse_handle_frame (GstBaseParse * parse,
           self->in_align == GST_AV1_PARSE_ALIGN_TEMPORAL_UNIT_ANNEX_B);
     }
 
-    if (self->in_align != GST_AV1_PARSE_ALIGN_NONE)
-      GST_LOG_OBJECT (self, "Query the upstream get the alignment %d",
-          self->in_align);
+    if (self->in_align != GST_AV1_PARSE_ALIGN_NONE) {
+      GST_LOG_OBJECT (self, "Query the upstream get the alignment %s",
+          gst_av1_parse_alignment_to_string (self->in_align));
+    } else {
+      self->in_align = GST_AV1_PARSE_ALIGN_BYTE;
+      GST_DEBUG_OBJECT (self, "alignment set to default %s",
+          gst_av1_parse_alignment_to_string (GST_AV1_PARSE_ALIGN_BYTE));
+    }
   }
 
-  if (self->in_align == GST_AV1_PARSE_ALIGN_NONE) {
-    /* Only happend at the first time of handle_frame, and the
-       alignment in the sink caps is unset. Try the default and
-       if error, try the annex B. */
-    ret = gst_av1_parse_detect_alignment (parse, frame, skipsize);
-    if (ret == GST_FLOW_OK && self->in_align != GST_AV1_PARSE_ALIGN_NONE)
-      GST_INFO_OBJECT (self, "Detect the input alignment %d", self->in_align);
-  }
-
-  if (self->in_align == GST_AV1_PARSE_ALIGN_NONE) {
-    GST_ERROR_OBJECT (self, "Input alignment is unknown");
-    return GST_FLOW_ERROR;
+  if (self->in_align == GST_AV1_PARSE_ALIGN_TEMPORAL_UNIT
+      && self->detect_annex_b) {
+    /* Only happend at the first time of handle_frame, try to
+       recognize the annex b stream format. */
+    if (gst_av1_parse_detect_stream_format (parse, frame)) {
+      GST_INFO_OBJECT (self, "Input alignment %s",
+          gst_av1_parse_alignment_to_string (self->in_align));
+    } else {
+      /* Because the input is already TU aligned, we should skip
+         the whole problematic TU and check the next one. */
+      *skipsize = gst_buffer_get_size (frame->buffer);
+      GST_WARNING_OBJECT (self, "Fail to detect the stream format for TU,"
+          " skip the whole TU %d", *skipsize);
+      return GST_FLOW_OK;
+    }
   }
 
   /* We may in pull mode and no caps is set */
@@ -1847,4 +2078,58 @@ gst_av1_parse_handle_frame (GstBaseParse * parse,
   }
 
   return ret;
+}
+
+static GstFlowReturn
+gst_av1_parse_pre_push_frame (GstBaseParse * parse, GstBaseParseFrame * frame)
+{
+  GstAV1Parse *self = GST_AV1_PARSE (parse);
+
+  frame->flags |= GST_BASE_PARSE_FRAME_FLAG_CLIP;
+
+  if (!frame->buffer)
+    return GST_FLOW_OK;
+
+  if (self->align == GST_AV1_PARSE_ALIGN_FRAME) {
+    /* When the input align to TU, it may may contain more than one frames
+       inside its buffer. When splitting a TU into frames, the base parse
+       class only assign the PTS to the first frame and leave the others'
+       PTS invalid. But in fact, all decode only frames should have invalid
+       PTS while showable frames should have correct PTS setting. */
+    if (self->in_align == GST_AV1_PARSE_ALIGN_TEMPORAL_UNIT
+        || self->in_align == GST_AV1_PARSE_ALIGN_TEMPORAL_UNIT_ANNEX_B) {
+      if (GST_BUFFER_FLAG_IS_SET (frame->buffer, GST_BUFFER_FLAG_DECODE_ONLY)) {
+        GST_BUFFER_PTS (frame->buffer) = GST_CLOCK_TIME_NONE;
+        GST_BUFFER_DURATION (frame->buffer) = GST_CLOCK_TIME_NONE;
+      } else {
+        GST_BUFFER_PTS (frame->buffer) = self->buffer_pts;
+        GST_BUFFER_DURATION (frame->buffer) = self->buffer_duration;
+      }
+
+      GST_BUFFER_DTS (frame->buffer) = self->buffer_dts;
+    } else {
+      if (GST_BUFFER_FLAG_IS_SET (frame->buffer, GST_BUFFER_FLAG_DECODE_ONLY)) {
+        GST_BUFFER_PTS (frame->buffer) = GST_CLOCK_TIME_NONE;
+        GST_BUFFER_DURATION (frame->buffer) = GST_CLOCK_TIME_NONE;
+      }
+    }
+  } else if (self->align == GST_AV1_PARSE_ALIGN_OBU) {
+    /* When we split a big frame or TU into OBUs, all OBUs should have the
+       same PTS and DTS of the input buffer, and should not have duration. */
+    if (self->in_align >= GST_AV1_PARSE_ALIGN_FRAME) {
+      GST_BUFFER_PTS (frame->buffer) = self->buffer_pts;
+      GST_BUFFER_DTS (frame->buffer) = self->buffer_dts;
+      GST_BUFFER_DURATION (frame->buffer) = GST_CLOCK_TIME_NONE;
+    }
+  }
+
+  GST_LOG_OBJECT (parse, "Adjust the frame buffer PTS/DTS/duration."
+      " The buffer of size %" G_GSIZE_FORMAT " now with dts %"
+      GST_TIME_FORMAT ", pts %" GST_TIME_FORMAT ", duration %"
+      GST_TIME_FORMAT, gst_buffer_get_size (frame->buffer),
+      GST_TIME_ARGS (GST_BUFFER_DTS (frame->buffer)),
+      GST_TIME_ARGS (GST_BUFFER_PTS (frame->buffer)),
+      GST_TIME_ARGS (GST_BUFFER_DURATION (frame->buffer)));
+
+  return GST_FLOW_OK;
 }

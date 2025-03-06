@@ -35,6 +35,9 @@ _gst_h264_picture_free (GstH264Picture * picture)
   if (picture->notify)
     picture->notify (picture->user_data);
 
+  if (picture->discont_state)
+    gst_video_codec_state_unref (picture->discont_state);
+
   g_free (picture);
 }
 
@@ -66,7 +69,7 @@ gst_h264_picture_new (void)
 /**
  * gst_h264_picture_set_user_data:
  * @picture: a #GstH264Picture
- * @user_data: private data
+ * @user_data: (nullable): private data
  * @notify: (closure user_data): a #GDestroyNotify
  *
  * Sets @user_data on the picture and the #GDestroyNotify that will be called when
@@ -95,7 +98,7 @@ gst_h264_picture_set_user_data (GstH264Picture * picture, gpointer user_data,
  * Gets private data set on the picture via
  * gst_h264_picture_set_user_data() previously.
  *
- * Returns: (transfer none): The previously set user_data
+ * Returns: (transfer none) (nullable): The previously set user_data
  */
 gpointer
 gst_h264_picture_get_user_data (GstH264Picture * picture)
@@ -142,7 +145,7 @@ gst_h264_dpb_new (void)
       g_array_sized_new (FALSE, TRUE, sizeof (GstH264Picture *),
       GST_H264_DPB_MAX_SIZE);
   g_array_set_clear_func (dpb->pic_list,
-      (GDestroyNotify) gst_h264_picture_clear);
+      (GDestroyNotify) gst_clear_h264_picture);
 
   return dpb;
 }
@@ -258,6 +261,22 @@ gst_h264_dpb_set_max_num_reorder_frames (GstH264Dpb * dpb,
   g_return_if_fail (max_num_reorder_frames <= dpb->max_num_frames);
 
   dpb->max_num_reorder_frames = max_num_reorder_frames;
+}
+
+/**
+ * gst_h264_dpb_get_max_num_reorder_frames:
+ * @dpb: a #GstH264Dpb
+ *
+ * Returns: Maximum number of reorder frames
+ *
+ * Since: 1.22.2
+ */
+guint32
+gst_h264_dpb_get_max_num_reorder_frames (GstH264Dpb * dpb)
+{
+  g_return_val_if_fail (dpb != NULL, GST_H264_DPB_MAX_SIZE);
+
+  return dpb->max_num_reorder_frames;
 }
 
 /**
@@ -461,7 +480,7 @@ gst_h264_dpb_get_long_ref_by_long_term_pic_num (GstH264Dpb * dpb,
  *
  * Find a short term reference picture which has the lowest frame_num_wrap
  *
- * Returns: (transfer full): a #GstH264Picture
+ * Returns: (transfer full) (nullable): a #GstH264Picture
  */
 GstH264Picture *
 gst_h264_dpb_get_lowest_frame_num_short_ref (GstH264Dpb * dpb)
@@ -593,7 +612,7 @@ gst_h264_dpb_get_size (GstH264Dpb * dpb)
  * @dpb: a #GstH264Dpb
  * @system_frame_number The system frame number
  *
- * Returns: (transfer full): the picture identified with the specified
+ * Returns: (transfer full) (nullable): the picture identified with the specified
  * @system_frame_number, or %NULL if DPB does not contain a #GstH264Picture
  * corresponding to the @system_frame_number
  *
@@ -656,7 +675,7 @@ gst_h264_dpb_has_empty_frame_buffer (GstH264Dpb * dpb)
 }
 
 static gint
-gst_h264_dpb_get_lowest_output_needed_picture (GstH264Dpb * dpb,
+gst_h264_dpb_get_lowest_output_needed_picture (GstH264Dpb * dpb, gboolean force,
     GstH264Picture ** picture)
 {
   gint i;
@@ -669,7 +688,7 @@ gst_h264_dpb_get_lowest_output_needed_picture (GstH264Dpb * dpb,
     GstH264Picture *picture =
         g_array_index (dpb->pic_list, GstH264Picture *, i);
 
-    if (!picture->needed_for_output)
+    if (!force && !picture->needed_for_output)
       continue;
 
     if (!GST_H264_PICTURE_IS_FRAME (picture) &&
@@ -718,7 +737,8 @@ gst_h264_dpb_needs_bump (GstH264Dpb * dpb, GstH264Picture * to_insert,
 
   lowest_poc = G_MAXINT32;
   is_ref_picture = FALSE;
-  lowest_index = gst_h264_dpb_get_lowest_output_needed_picture (dpb, &picture);
+  lowest_index = gst_h264_dpb_get_lowest_output_needed_picture (dpb,
+      FALSE, &picture);
   if (lowest_index >= 0) {
     lowest_poc = picture->pic_order_cnt;
     is_ref_picture = picture->ref_pic;
@@ -739,6 +759,12 @@ gst_h264_dpb_needs_bump (GstH264Dpb * dpb, GstH264Picture * to_insert,
     /* Equal to normal bump. */
     if (!gst_h264_dpb_has_empty_frame_buffer (dpb))
       goto normal_bump;
+
+    /* In case of POC type 2, decoding order is equal to output order */
+    if (picture->pic_order_cnt_type == 2) {
+      GST_TRACE ("POC type == 2, bumping");
+      return TRUE;
+    }
 
     /* 7.4.1.2.2: The values of picture order count for the coded pictures
        in consecutive access units in decoding order containing non-reference
@@ -855,8 +881,10 @@ normal_bump:
     return TRUE;
   }
 
-  GST_TRACE ("No empty frame buffer, but lowest poc %d > current poc %d,"
-      " no need bumping.", lowest_poc, to_insert->pic_order_cnt);
+  if (to_insert) {
+    GST_TRACE ("No empty frame buffer, but lowest poc %d > current poc %d,"
+        " no need bumping.", lowest_poc, to_insert->pic_order_cnt);
+  }
 
   return FALSE;
 }
@@ -882,23 +910,36 @@ gst_h264_dpb_bump (GstH264Dpb * dpb, gboolean drain)
   GstH264Picture *other_picture;
   gint i;
   gint index;
+  gboolean output_needed = TRUE;
 
   g_return_val_if_fail (dpb != NULL, NULL);
 
-  index = gst_h264_dpb_get_lowest_output_needed_picture (dpb, &picture);
+  index = gst_h264_dpb_get_lowest_output_needed_picture (dpb, FALSE, &picture);
+  /* Bumping is needed but has no output needed pictures. Pick the smallest
+   * POC picture */
+  if (!picture && !drain) {
+    index = gst_h264_dpb_get_lowest_output_needed_picture (dpb, TRUE, &picture);
+    if (picture)
+      output_needed = FALSE;
+  }
 
   if (!picture || index < 0)
     return NULL;
 
   picture->needed_for_output = FALSE;
 
-  dpb->num_output_needed--;
+  if (output_needed)
+    dpb->num_output_needed--;
+
   g_assert (dpb->num_output_needed >= 0);
 
   /* NOTE: don't use g_array_remove_index_fast here since the last picture
    * need to be referenced for bumping decision */
-  if (!GST_H264_PICTURE_IS_REF (picture) || drain)
+  if (!GST_H264_PICTURE_IS_REF (picture) || drain ||
+      /* Or in case of emergency bumping, remove this picture from dpb as well */
+      !output_needed) {
     g_array_remove_index (dpb->pic_list, index);
+  }
 
   other_picture = picture->other_field;
   if (other_picture) {
