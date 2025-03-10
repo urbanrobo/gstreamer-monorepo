@@ -178,7 +178,7 @@ map_failed:
   }
 invalid_size:
   {
-    GST_ERROR ("invalid buffer size %" G_GSIZE_FORMAT " < %" G_GSIZE_FORMAT,
+    GST_INFO ("invalid buffer size %" G_GSIZE_FORMAT " < %" G_GSIZE_FORMAT,
         frame->map[0].size, info->size);
     gst_buffer_unmap (buffer, &frame->map[0]);
     memset (frame, 0, sizeof (GstVideoFrame));
