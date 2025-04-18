@@ -544,9 +544,18 @@ sink_chain_list (GstPad * pad, GstObject * parent, GstBufferList * list)
   GstDtlsDec *self = GST_DTLS_DEC (parent);
   GstPad *other_pad;
   ProcessListData process_list_data = { self, GST_FLOW_OK, 0 };
+  struct timespec start, end;
+
+  clock_gettime(CLOCK_MONOTONIC, &start);
 
   list = gst_buffer_list_make_writable (list);
   gst_buffer_list_foreach (list, process_buffer_from_list, &process_list_data);
+  clock_gettime(CLOCK_MONOTONIC, &end);
+  long seconds = end.tv_sec - start.tv_sec;
+  long nanoseconds = end.tv_nsec - start.tv_nsec;
+  double elapsed_ms = seconds * 1000.0 + nanoseconds / 1.0e6;
+
+  GST_ERROR_OBJECT (pad, "sink_chain_list Elapsed time: %.3f ms\n", elapsed_ms);
 
   /* If we successfully processed at least some buffers then forward those */
   if (process_list_data.flow_ret != GST_FLOW_OK

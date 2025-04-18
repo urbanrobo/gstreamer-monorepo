@@ -7863,6 +7863,7 @@ gst_webrtc_bin_change_state (GstElement * element, GstStateChange transition)
       PC_LOCK (webrtc);
       _update_need_negotiation (webrtc);
       PC_UNLOCK (webrtc);
+      gst_debug_bin_to_dot_file(GST_BIN(webrtc), GST_DEBUG_GRAPH_SHOW_ALL, "webrtc_play_null");
       break;
     }
     case GST_STATE_CHANGE_READY_TO_PAUSED:
@@ -7883,9 +7884,11 @@ gst_webrtc_bin_change_state (GstElement * element, GstStateChange transition)
        * requiring that it be in PLAYING already in order to send/receive
        * correctly :/ */
       ret = GST_STATE_CHANGE_NO_PREROLL;
+      gst_debug_bin_to_dot_file(GST_BIN(webrtc), GST_DEBUG_GRAPH_SHOW_ALL, "webrtc_ready_paused");
       break;
     case GST_STATE_CHANGE_PAUSED_TO_READY:
       webrtc->priv->running = FALSE;
+      gst_debug_bin_to_dot_file(GST_BIN(webrtc), GST_DEBUG_GRAPH_SHOW_ALL, "webrtc_paused_ready");
       break;
     case GST_STATE_CHANGE_READY_TO_NULL:
       _stop_thread (webrtc);

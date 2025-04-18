@@ -33,6 +33,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
 
 GST_DEBUG_CATEGORY_STATIC (gst_sctp_dec_debug_category);
 #define GST_CAT_DEFAULT gst_sctp_dec_debug_category
@@ -122,6 +123,7 @@ data_queue_empty_cb (GstDataQueue * queue, gpointer user_data)
 static void
 data_queue_full_cb (GstDataQueue * queue, gpointer user_data)
 {
+  GST_ERROR ("Data queue on sctpdec is full\n");
 }
 
 static void
@@ -422,16 +424,25 @@ gst_sctp_data_srcpad_loop (GstPad * pad)
   if (gst_data_queue_pop (sctpdec_pad->packet_queue, &item)) {
     GstBuffer *buffer;
     GstFlowReturn flow_ret;
+    struct timespec start, end;
 
     buffer = GST_BUFFER (item->object);
-    GST_DEBUG_OBJECT (pad, "Forwarding buffer %" GST_PTR_FORMAT, buffer);
+    GST_ERROR_OBJECT (pad, "Forwarding buffer %" GST_PTR_FORMAT, buffer);
 
+    clock_gettime(CLOCK_MONOTONIC, &start);
     flow_ret = gst_pad_push (pad, buffer);
     item->object = NULL;
 
     GST_OBJECT_LOCK (self);
     gst_flow_combiner_update_pad_flow (self->flow_combiner, pad, flow_ret);
     GST_OBJECT_UNLOCK (self);
+
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    long seconds = end.tv_sec - start.tv_sec;
+    long nanoseconds = end.tv_nsec - start.tv_nsec;
+    double elapsed_ms = seconds * 1000.0 + nanoseconds / 1.0e6;
+
+    GST_ERROR_OBJECT (pad, "Elapsed time: %.3f ms\n", elapsed_ms);
 
     if (G_UNLIKELY (flow_ret == GST_FLOW_FLUSHING
             || flow_ret == GST_FLOW_NOT_LINKED) || flow_ret == GST_FLOW_EOS) {

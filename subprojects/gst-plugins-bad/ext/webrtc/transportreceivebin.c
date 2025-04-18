@@ -136,7 +136,8 @@ transport_receive_bin_set_receive_state (TransportReceiveBin * receive,
   }
 
   if (state == RECEIVE_STATE_PASS) {
-    g_object_set (receive->queue, "leaky", 0, NULL);
+    GST_ERROR ("transport_receive_bin RECEIVE_STATE_PASS");
+    g_object_set (receive->queue, "leaky", 2, NULL);
 
     if (receive->rtp_block)
       _free_pad_block (receive->rtp_block);
@@ -146,6 +147,7 @@ transport_receive_bin_set_receive_state (TransportReceiveBin * receive,
       _free_pad_block (receive->rtcp_block);
     receive->rtcp_block = NULL;
   } else {
+    GST_ERROR ("transport_receive_bin RECEIVE_STATE_BLOCK");
     g_assert (state == RECEIVE_STATE_BLOCK);
     g_object_set (receive->queue, "leaky", 2, NULL);
     if (receive->rtp_block == NULL) {
@@ -326,7 +328,7 @@ transport_receive_bin_constructed (GObject * object)
   g_object_set (capsfilter, "caps", caps, NULL);
   gst_caps_unref (caps);
 
-  receive->queue = gst_element_factory_make ("queue", NULL);
+  receive->queue = gst_element_factory_make ("queue", "transport_rec_queue");
   /* FIXME: make this configurable? */
   g_object_set (receive->queue, "leaky", 2, "max-size-time", (guint64) 0,
       "max-size-buffers", 0, "max-size-bytes", 5 * 1024 * 1024, NULL);

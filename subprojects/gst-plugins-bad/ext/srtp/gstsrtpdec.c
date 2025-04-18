@@ -1596,13 +1596,36 @@ drop_buffer:
 static GstFlowReturn
 gst_srtp_dec_chain_rtp (GstPad * pad, GstObject * parent, GstBuffer * buf)
 {
-  return gst_srtp_dec_chain (pad, parent, buf, FALSE);
+  GstFlowReturn ret;
+  struct timespec start, end;
+
+  clock_gettime(CLOCK_MONOTONIC, &start);
+  ret = gst_srtp_dec_chain (pad, parent, buf, FALSE);
+  clock_gettime(CLOCK_MONOTONIC, &end);
+  long seconds = end.tv_sec - start.tv_sec;
+  long nanoseconds = end.tv_nsec - start.tv_nsec;
+  double elapsed_ms = seconds * 1000.0 + nanoseconds / 1.0e6;
+ 
+  GST_ERROR_OBJECT (pad, "gst_srtp_dec_chain_rtp Elapsed time: %.3f ms\n", elapsed_ms);
+
+  return ret;
 }
 
 static GstFlowReturn
 gst_srtp_dec_chain_rtcp (GstPad * pad, GstObject * parent, GstBuffer * buf)
 {
-  return gst_srtp_dec_chain (pad, parent, buf, TRUE);
+  GstFlowReturn ret;
+  struct timespec start, end;
+
+  clock_gettime(CLOCK_MONOTONIC, &start);
+  ret = gst_srtp_dec_chain (pad, parent, buf, TRUE);
+  clock_gettime(CLOCK_MONOTONIC, &end);
+  long seconds = end.tv_sec - start.tv_sec;
+  long nanoseconds = end.tv_nsec - start.tv_nsec;
+  double elapsed_ms = seconds * 1000.0 + nanoseconds / 1.0e6;
+ 
+  GST_ERROR_OBJECT (pad, "gst_srtp_dec_chain_rtp Elapsed time: %.3f ms\n", elapsed_ms);
+  return ret;
 }
 
 static GstStateChangeReturn

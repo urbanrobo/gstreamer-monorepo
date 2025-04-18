@@ -1,0 +1,10 @@
+{
+    "files.associations": {
+        "*.ino": "arduino",
+        "chrono": "c",
+        "random": "c",
+        "limits": "c",
+        "algorithm": "c",
+        "regex": "c"
+    }
+}
